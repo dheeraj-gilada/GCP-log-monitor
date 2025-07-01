@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # Main GCP Log Monitoring Application
+  gcp-log-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gcp-log-monitor
+    ports:
+      - "8000:8000"
+    environment:
+      # Load environment variables from .env file
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      # Mount source code for development (remove in production)
+      - .:/app
+      # Mount logs directory
+      - ./logs:/app/logs
+      # Mount examples directory for service account files
+      - ./examples:/app/examples
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - gcp-monitor-network
+
+  # Optional: Add Redis for caching (uncomment when needed in later phases)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: gcp-monitor-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   restart: unless-stopped
+  #   networks:
+  #     - gcp-monitor-network
+
+networks:
+  gcp-monitor-network:
+    driver: bridge
+
+# volumes:
+#   redis_data:
