@@ -18,7 +18,6 @@ from app.models.schemas import LogEntry, LogSeverity, ResourceType, Anomaly, Ano
 from app.core.metrics_calculator import MetricsCalculator
 from app.services.gpt_reasoning import GPTReasoningService
 
-
 class AnomalyRule(Enum):
     """Statistical anomaly detection rules."""
     ERROR_RATE_SPIKE = "error_rate_spike"
@@ -533,6 +532,31 @@ class AnomalyDetectionService:
         
         # Recreate detector with new thresholds
         self.statistical_detector = StatisticalDetector(self.thresholds)
+    
+    def get_detection_thresholds(self) -> DetectionThresholds:
+        """Get current detection thresholds."""
+        return self.thresholds
+    
+    async def update_detection_thresholds(self, threshold_adjustments: Dict[str, float]):
+        """Update detection thresholds based on supervisor recommendations."""
+        try:
+            updated_count = 0
+            for key, value in threshold_adjustments.items():
+                if hasattr(self.thresholds, key):
+                    old_value = getattr(self.thresholds, key)
+                    setattr(self.thresholds, key, value)
+                    logging.info(f"Supervisor updated threshold: {key} from {old_value} to {value}")
+                    updated_count += 1
+                else:
+                    logging.warning(f"Unknown threshold parameter: {key}")
+            
+            if updated_count > 0:
+                # Recreate detector with new thresholds
+                self.statistical_detector = StatisticalDetector(self.thresholds)
+                logging.info(f"Successfully updated {updated_count} detection thresholds")
+            
+        except Exception as e:
+            logging.error(f"Error updating detection thresholds: {e}")
     
     async def start_processing(self):
         """Start background processing tasks."""

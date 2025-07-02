@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from app.config import get_settings
 from app.services.log_ingestion import LogIngestionService
 from app.services.gcp_service import GCPService, GCPLogStreamConfig
-from app.services.anomaly_detection import AnomalyDetectionService
+from app.services.anomaly_detection import AnomalyDetectionService, DetectionThresholds
 from app.services.email_service import EmailService
+from app.services.monitoring_supervisor import MonitoringSupervisor, MonitoringContext, SupervisorDecision
 from app.models.schemas import LogEntry, Anomaly, Alert, AnomalySeverity, AlertType, AlertStatus, AnomalyType
 from app.api.websockets import broadcast_stats_update, broadcast_alert_generated
 
@@ -26,6 +27,7 @@ class MonitoringConfig:
     enable_gcp_streaming: bool = True
     enable_email_alerts: bool = True
     enable_ai_analysis: bool = True
+    enable_ai_supervisor: bool = True  # AI-powered supervisory layer
     min_logs_for_analysis: int = 10
     alert_cooldown_minutes: int = 30  # Avoid spam alerts
 
@@ -42,6 +44,7 @@ class MonitoringEngine:
         self.gcp_service = GCPService()
         self.anomaly_service = AnomalyDetectionService()
         self.email_service = EmailService()
+        self.supervisor = MonitoringSupervisor() if self.config.enable_ai_supervisor else None
         
         # Engine state
         self._running = False
@@ -187,7 +190,36 @@ class MonitoringEngine:
             logging.error(f"Error in analysis cycle: {e}")
     
     async def _process_detected_anomalies(self, anomalies: List[Anomaly], logs: List[LogEntry]):
-        """Process detected anomalies and generate alerts."""
+        """Process detected anomalies with AI supervisor and generate alerts."""
+        
+        # Apply AI supervisor analysis if enabled
+        if self.config.enable_ai_supervisor and self.supervisor and self.supervisor.is_supervisor_available():
+            try:
+                # Create monitoring context
+                error_rate = len([log for log in logs if log.severity.value in ['ERROR', 'CRITICAL']]) / len(logs) if logs else 0.0
+                context = MonitoringContext(
+                    total_logs=len(logs),
+                    window_minutes=self.config.window_minutes,
+                    error_rate=error_rate,
+                    anomaly_count=len(anomalies),
+                    previous_anomalies=[]  # Could be enhanced with historical data
+                )
+                
+                # Get current detection thresholds
+                current_thresholds = self.anomaly_service.get_detection_thresholds()
+                
+                # Run supervisor analysis
+                supervisor_decision = await self.supervisor.analyze_monitoring_situation(
+                    anomalies, logs, context, current_thresholds
+                )
+                
+                if supervisor_decision:
+                    await self._apply_supervisor_decision(supervisor_decision, anomalies)
+                    
+            except Exception as e:
+                logging.error(f"Supervisor analysis failed: {e}")
+        
+        # Process each anomaly for alert generation
         for anomaly in anomalies:
             try:
                 # Check cooldown for this type of anomaly
@@ -214,6 +246,72 @@ class MonitoringEngine:
                 
             except Exception as e:
                 logging.error(f"Error processing anomaly {anomaly.type.value}: {e}")
+    
+    async def _apply_supervisor_decision(self, decision: SupervisorDecision, anomalies: List[Anomaly]):
+        """Apply supervisor recommendations to the monitoring system."""
+        try:
+            logging.info(f"Applying supervisor decision: {decision.reasoning[:100]}...")
+            
+            # Apply threshold adjustments
+            if decision.threshold_adjustments:
+                logging.info(f"Supervisor recommending threshold adjustments: {decision.threshold_adjustments}")
+                await self.anomaly_service.update_detection_thresholds(decision.threshold_adjustments)
+            
+            # Apply severity adjustments
+            if decision.severity_adjustment and decision.severity_adjustment != "maintain":
+                for anomaly in anomalies:
+                    original_severity = anomaly.severity
+                    if decision.severity_adjustment == "increase":
+                        anomaly.severity = self._increase_severity(anomaly.severity)
+                    elif decision.severity_adjustment == "decrease":
+                        anomaly.severity = self._decrease_severity(anomaly.severity)
+                    
+                    if anomaly.severity != original_severity:
+                        logging.info(f"Supervisor adjusted anomaly severity: {original_severity.value} -> {anomaly.severity.value}")
+            
+            # Log incident summary if provided
+            if decision.incident_summary:
+                logging.info(f"Supervisor incident summary:\n{decision.incident_summary}")
+                
+                # Broadcast enhanced incident information
+                await broadcast_stats_update({
+                    "type": "supervisor_incident_summary",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "summary": decision.incident_summary,
+                    "confidence": decision.confidence,
+                    "escalation_needed": decision.escalate_to_human
+                })
+            
+            # Log remediation actions
+            if decision.suggested_actions:
+                logging.info(f"Supervisor suggested actions: {', '.join(decision.suggested_actions[:3])}...")
+                
+                # Broadcast actionable recommendations
+                await broadcast_stats_update({
+                    "type": "supervisor_recommendations",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "actions": decision.suggested_actions,
+                    "escalate_to_human": decision.escalate_to_human,
+                    "confidence": decision.confidence
+                })
+            
+            # Track supervisor involvement
+            self.stats["supervisor_decisions"] = self.stats.get("supervisor_decisions", 0) + 1
+            
+        except Exception as e:
+            logging.error(f"Error applying supervisor decision: {e}")
+    
+    def _increase_severity(self, severity: AnomalySeverity) -> AnomalySeverity:
+        """Increase anomaly severity level."""
+        severity_order = [AnomalySeverity.LOW, AnomalySeverity.MEDIUM, AnomalySeverity.HIGH, AnomalySeverity.CRITICAL]
+        current_index = severity_order.index(severity)
+        return severity_order[min(current_index + 1, len(severity_order) - 1)]
+    
+    def _decrease_severity(self, severity: AnomalySeverity) -> AnomalySeverity:
+        """Decrease anomaly severity level."""
+        severity_order = [AnomalySeverity.LOW, AnomalySeverity.MEDIUM, AnomalySeverity.HIGH, AnomalySeverity.CRITICAL]
+        current_index = severity_order.index(severity)
+        return severity_order[max(current_index - 1, 0)]
     
     async def _create_alert_from_anomaly(self, anomaly: Anomaly, logs: List[LogEntry]) -> Alert:
         """Create an Alert object from an detected anomaly."""
@@ -331,17 +429,26 @@ class MonitoringEngine:
         # Calculate uptime
         uptime_seconds = (datetime.utcnow() - self.stats["uptime_start"]).total_seconds()
         
+        # Get supervisor status
+        supervisor_status = {
+            "enabled": self.config.enable_ai_supervisor,
+            "available": self.supervisor.is_supervisor_available() if self.supervisor else False,
+            "decision_count": len(self.supervisor.get_decision_history()) if self.supervisor else 0
+        }
+        
         return {
             **self.stats,
             "uptime_seconds": uptime_seconds,
             "running": self._running,
             "buffer_stats": buffer_stats,
             "gcp_connected": self.gcp_service.is_connected(),
+            "supervisor": supervisor_status,
             "services": {
                 "log_ingestion": self.log_service.is_processing(),
                 "anomaly_detection": self.anomaly_service.is_processing(),
                 "gcp_streaming": self.gcp_service.is_streaming(),
-                "email_service": self.email_service.is_configured()
+                "email_service": self.email_service.is_configured(),
+                "ai_supervisor": supervisor_status["available"]
             }
         }
     
@@ -405,4 +512,32 @@ class MonitoringEngine:
             "success": True,
             "analysis_duration_seconds": duration,
             "timestamp": start_time.isoformat()
+        }
+    
+    def get_supervisor_decision_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent supervisor decisions for analysis."""
+        if not self.supervisor:
+            return []
+        return self.supervisor.get_decision_history(limit)
+    
+    def get_supervisor_status(self) -> Dict[str, Any]:
+        """Get detailed supervisor status and capabilities."""
+        if not self.supervisor:
+            return {
+                "enabled": self.config.enable_ai_supervisor,
+                "available": False,
+                "reason": "Supervisor not initialized"
+            }
+        
+        return {
+            "enabled": self.config.enable_ai_supervisor,
+            "available": self.supervisor.is_supervisor_available(),
+            "decision_count": len(self.supervisor.get_decision_history()),
+            "recent_decisions": self.supervisor.get_decision_history(3),
+            "capabilities": [
+                "Anomaly context analysis",
+                "Dynamic threshold adjustment", 
+                "Incident summary generation",
+                "Remediation action suggestions"
+            ]
         }
