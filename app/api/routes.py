@@ -1,340 +1,520 @@
 """
-Main API routes for GCP Log Monitoring system.
-Handles file uploads, GCP configuration, alerts, and monitoring endpoints.
+API routes for the GCP log monitoring system.
+Integrates with all core services for comprehensive monitoring.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import JSONResponse
-from typing import List, Optional
+from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Depends
+from fastapi.responses import JSONResponse, HTMLResponse
+from typing import List, Dict, Any, Optional
+from datetime import datetime
 import json
-import asyncio
+import logging
 
-from app.api.dependencies import (
-    validate_api_access,
-    validate_gcp_config,
-    validate_openai_config_dep,
-    validate_email_config,
-    get_pagination_params,
-    validate_file_upload,
-    get_current_settings
-)
-from app.models.schemas import (
-    FileUploadResponse,
-    GCPConfigRequest,
-    GCPConfigResponse,
-    AlertPreviewRequest,
-    AlertSendRequest,
-    MonitoringStats,
-    SystemHealth
-)
-from app.config import Settings
+from app.api.dependencies import get_monitoring_engine
+from app.core.monitoring_engine import MonitoringEngine
+from app.models.schemas import LogEntry, Anomaly, Alert
 
-# Create router
-router = APIRouter(tags=["monitoring"], dependencies=[Depends(validate_api_access)])
+router = APIRouter()
 
+# ==========================================
+# MONITORING ENGINE ENDPOINTS
+# ==========================================
 
-@router.get("/health", response_model=SystemHealth)
-async def get_system_health():
-    """Get system health status and service availability."""
-    # TODO: Implement actual health checks in Phase 2
-    return SystemHealth(
-        status="healthy",
-        uptime_seconds=0,  # TODO: Calculate actual uptime
-        gcp_connected=False,  # TODO: Check GCP connection
-        openai_connected=False,  # TODO: Check OpenAI connection
-        email_service_healthy=False,  # TODO: Check email service
-        logs_in_buffer=0,
-        buffer_utilization=0.0,
-        processing_rate_per_second=0.0
-    )
-
-
-@router.get("/stats", response_model=MonitoringStats)
-async def get_monitoring_stats(
-    pagination: dict = Depends(get_pagination_params)
-):
-    """Get real-time monitoring statistics."""
-    from datetime import datetime, timedelta
-    
-    # TODO: Implement actual stats calculation in Phase 2.5
-    now = datetime.utcnow()
-    window_start = now - timedelta(minutes=10)
-    
-    return MonitoringStats(
-        total_logs=0,
-        error_rate=0.0,
-        avg_latency=None,
-        active_anomalies=0,
-        alerts_sent=0,
-        window_start=window_start,
-        window_end=now,
-        by_resource_type={},
-        by_severity={}
-    )
-
-
-# File Upload Endpoints
-
-@router.post("/upload", response_model=FileUploadResponse)
-async def upload_log_file(
-    file: UploadFile = File(...),
-    log_format: str = Form(default="auto")  # auto, json, text
-):
-    """Upload and parse log files."""
-    # Validate file
-    await validate_file_upload(
-        file_size=file.size or 0,
-        file_type=file.content_type or "text/plain"
-    )
-    
+@router.post("/monitoring/start")
+async def start_monitoring(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Start the monitoring engine."""
     try:
+        if engine.is_running():
+            return {"success": False, "message": "Monitoring already running"}
+        
+        await engine.start()
+        return {
+            "success": True,
+            "message": "Monitoring engine started successfully",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to start monitoring: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/monitoring/stop")
+async def stop_monitoring(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Stop the monitoring engine."""
+    try:
+        if not engine.is_running():
+            return {"success": False, "message": "Monitoring not running"}
+        
+        await engine.stop()
+        return {
+            "success": True,
+            "message": "Monitoring engine stopped successfully",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to stop monitoring: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitoring/status")
+async def get_monitoring_status(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Get current monitoring status and statistics."""
+    try:
+        stats = await engine.get_monitoring_stats()
+        return {
+            "success": True,
+            "status": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to get monitoring status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/monitoring/force-analysis")
+async def force_analysis(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Force immediate analysis cycle (for testing/debugging)."""
+    try:
+        result = await engine.force_analysis()
+        return {
+            "success": True,
+            "analysis_result": result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to force analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/monitoring/configure")
+async def configure_monitoring(
+    config: Dict[str, Any],
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
+):
+    """Update monitoring configuration."""
+    try:
+        await engine.configure_monitoring(**config)
+        return {
+            "success": True,
+            "message": "Configuration updated successfully",
+            "updated_config": config,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to update configuration: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# LOG INGESTION ENDPOINTS
+# ==========================================
+
+@router.post("/logs/upload")
+async def upload_logs(
+    file: UploadFile = File(...),
+    log_format: str = "auto",
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
+):
+    """Upload and ingest log file."""
+    try:
+        # Validate file type
+        if not file.filename.endswith(('.txt', '.log', '.json')):
+            raise HTTPException(
+                status_code=400, 
+                detail="Only .txt, .log, and .json files are supported"
+            )
+        
         # Read file content
         content = await file.read()
-        content_str = content.decode('utf-8')
+        file_content = content.decode('utf-8')
         
-        # Calculate file size in MB
-        file_size_mb = len(content) / (1024 * 1024)
+        # Ingest logs
+        result = await engine.ingest_file(file_content, file.filename, log_format)
         
-        # TODO: Implement actual log parsing in Phase 2
-        # For now, just return a success response
-        logs_processed = content_str.count('\n') if content_str else 0
-        
-        return FileUploadResponse(
-            success=True,
-            message=f"File '{file.filename}' uploaded successfully",
-            logs_processed=logs_processed,
-            file_size_mb=round(file_size_mb, 2)
-        )
+        return {
+            "success": True,
+            "ingestion_result": result,
+            "filename": file.filename,
+            "file_size_kb": len(content) / 1024,
+            "timestamp": datetime.utcnow().isoformat()
+        }
         
     except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="File must be valid UTF-8 encoded text"
-        )
+        raise HTTPException(status_code=400, detail="File encoding not supported. Please use UTF-8.")
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process file: {str(e)}"
-        )
+        logging.error(f"Failed to upload logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/logs")
+@router.get("/logs/recent")
 async def get_recent_logs(
-    pagination: dict = Depends(get_pagination_params),
+    limit: int = 100,
     severity: Optional[str] = None,
-    resource_type: Optional[str] = None
+    resource_type: Optional[str] = None,
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
 ):
     """Get recent logs with optional filtering."""
-    # TODO: Implement actual log retrieval in Phase 2
-    return {
-        "logs": [],
-        "total": 0,
-        "skip": pagination["skip"],
-        "limit": pagination["limit"]
-    }
-
-
-# GCP Configuration Endpoints
-
-@router.post("/gcp/configure", response_model=GCPConfigResponse)
-async def configure_gcp(
-    config: GCPConfigRequest,
-    settings: Settings = Depends(get_current_settings)
-):
-    """Configure GCP connection settings."""
     try:
-        # TODO: Implement actual GCP configuration in Phase 2
-        # For now, validate the request and return success
+        # Get logs from engine
+        logs = await engine.get_recent_logs(limit)
         
-        # Basic validation
-        if not config.project_id:
-            raise HTTPException(status_code=400, detail="Project ID is required")
+        # Apply additional filters if specified
+        if severity:
+            logs = [log for log in logs if log.get('severity') == severity.upper()]
         
-        if not config.service_account_path:
-            raise HTTPException(status_code=400, detail="Service account path is required")
+        if resource_type:
+            logs = [log for log in logs if log.get('resource', {}).get('type') == resource_type]
         
-        # TODO: Test actual GCP connection
-        connection_tested = False
-        
-        return GCPConfigResponse(
-            success=True,
-            message="GCP configuration saved successfully",
-            project_id=config.project_id,
-            connection_tested=connection_tested
-        )
+        return {
+            "success": True,
+            "logs": logs,
+            "count": len(logs),
+            "filters": {
+                "limit": limit,
+                "severity": severity,
+                "resource_type": resource_type
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
         
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to configure GCP: {str(e)}"
+        logging.error(f"Failed to get recent logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs/buffer-stats")
+async def get_buffer_stats(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Get log buffer statistics."""
+    try:
+        stats = await engine.log_service.get_buffer_stats()
+        return {
+            "success": True,
+            "buffer_stats": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to get buffer stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# GCP INTEGRATION ENDPOINTS
+# ==========================================
+
+@router.get("/gcp/test-connection")
+async def test_gcp_connection(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Test GCP connection."""
+    try:
+        result = await engine.gcp_service.test_connection()
+        return {
+            "success": True,
+            "connection_test": result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"GCP connection test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gcp/resources")
+async def get_gcp_resources(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Get available GCP resources."""
+    try:
+        resources = await engine.gcp_service.get_available_resources()
+        return {
+            "success": True,
+            "resources": resources,
+            "count": len(resources),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to get GCP resources: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gcp/metrics")
+async def get_gcp_metrics(
+    hours: int = 1,
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
+):
+    """Get GCP log metrics for specified time period."""
+    try:
+        metrics = await engine.gcp_service.get_log_metrics(hours=hours)
+        return {
+            "success": True,
+            "metrics": metrics,
+            "time_period_hours": hours,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to get GCP metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/gcp/fetch-logs")
+async def fetch_gcp_logs(
+    request: Dict[str, Any],
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
+):
+    """Fetch logs from GCP with specific filters."""
+    try:
+        # Parse request parameters
+        hours = request.get('hours', 1)
+        max_entries = request.get('max_entries', 500)
+        severity_filter = request.get('severity_filter')
+        
+        # Fetch logs
+        logs = await engine.gcp_service.fetch_recent_logs(
+            minutes=hours * 60,
+            max_entries=max_entries
         )
+        
+        # Convert to dict format
+        log_dicts = [log.dict() for log in logs]
+        
+        return {
+            "success": True,
+            "logs": log_dicts,
+            "count": len(log_dicts),
+            "parameters": request,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"Failed to fetch GCP logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/gcp/status")
-async def get_gcp_status():
-    """Get current GCP connection status."""
-    # TODO: Implement actual GCP status check in Phase 2
-    return {
-        "connected": False,
-        "project_id": None,
-        "last_connection_test": None,
-        "error_message": "GCP service not implemented yet"
-    }
+# ==========================================
+# ANOMALY DETECTION ENDPOINTS  
+# ==========================================
 
-
-@router.post("/gcp/test-connection")
-async def test_gcp_connection():
-    """Test GCP connection with current configuration."""
-    # TODO: Implement actual connection test in Phase 2
-    return {
-        "success": False,
-        "message": "Connection test not implemented yet",
-        "details": {}
-    }
-
-
-# Anomaly and Alert Endpoints
-
-@router.get("/anomalies")
-async def get_anomalies(
-    pagination: dict = Depends(get_pagination_params),
-    severity: Optional[str] = None,
-    active_only: bool = True
+@router.post("/anomalies/analyze")
+async def analyze_current_logs(
+    use_ai_analysis: bool = True,
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
 ):
-    """Get detected anomalies."""
-    # TODO: Implement actual anomaly retrieval in Phase 2
-    return {
-        "anomalies": [],
-        "total": 0,
-        "skip": pagination["skip"],
-        "limit": pagination["limit"]
-    }
+    """Analyze current logs for anomalies."""
+    try:
+        # Get recent logs
+        logs = await engine.log_service.get_logs_in_window()
+        
+        if not logs:
+            return {
+                "success": True,
+                "anomalies": [],
+                "message": "No logs available for analysis",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Analyze for anomalies
+        anomalies = await engine.anomaly_service.analyze_logs(logs, use_ai_analysis)
+        
+        # Convert to dict format
+        anomaly_dicts = [anomaly.dict() for anomaly in anomalies]
+        
+        return {
+            "success": True,
+            "anomalies": anomaly_dicts,
+            "logs_analyzed": len(logs),
+            "anomalies_detected": len(anomalies),
+            "ai_analysis_used": use_ai_analysis,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"Failed to analyze logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/anomalies/{anomaly_id}")
-async def get_anomaly_details(anomaly_id: str):
-    """Get detailed information about a specific anomaly."""
-    # TODO: Implement in Phase 2
-    raise HTTPException(status_code=404, detail="Anomaly not found")
-
-
-@router.get("/alerts")
-async def get_alerts(
-    pagination: dict = Depends(get_pagination_params),
-    status: Optional[str] = None
+@router.post("/anomalies/configure-thresholds")
+async def configure_anomaly_thresholds(
+    thresholds: Dict[str, float],
+    engine: MonitoringEngine = Depends(get_monitoring_engine)
 ):
-    """Get generated alerts."""
-    # TODO: Implement actual alert retrieval in Phase 3
+    """Configure anomaly detection thresholds."""
+    try:
+        engine.anomaly_service.configure_thresholds(**thresholds)
+        
+        return {
+            "success": True,
+            "message": "Thresholds updated successfully",
+            "updated_thresholds": thresholds,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"Failed to configure thresholds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# SERVICE TESTING ENDPOINTS
+# ==========================================
+
+@router.get("/services/test-all")
+async def test_all_services(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Test all service connections and configurations."""
+    try:
+        results = await engine.test_services()
+        
+        # Add overall health assessment
+        all_healthy = all(
+            result.get('connected', result.get('configured', result.get('available', False)))
+            for result in results.values()
+        )
+        
+        return {
+            "success": True,
+            "overall_health": "healthy" if all_healthy else "degraded",
+            "service_tests": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"Service tests failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/services/gpt/test")
+async def test_gpt_service(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Test GPT service with a simple analysis."""
+    try:
+        if not engine.anomaly_service.gpt_service.is_available():
+            return {
+                "success": False,
+                "message": "GPT service not available - check OpenAI API key configuration",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Create a test log entry
+        from app.models.schemas import LogEntry, LogSeverity, LogResource, ResourceType
+        
+        test_log = LogEntry(
+            timestamp=datetime.utcnow(),
+            severity=LogSeverity.ERROR,
+            message="Database connection timeout - unable to connect to primary database",
+            resource=LogResource(type=ResourceType.CLOUD_SQL, labels={"instance": "test"}),
+            source="test"
+        )
+        
+        # Test single log analysis
+        analysis = await engine.anomaly_service.gpt_service.analyze_single_log_entry(test_log)
+        
+        return {
+            "success": True,
+            "message": "GPT service is working",
+            "test_analysis": analysis,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"GPT service test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# ALERT ENDPOINTS
+# ==========================================
+
+@router.get("/alerts/recent")
+async def get_recent_alerts(limit: int = 50):
+    """Get recent alerts (placeholder - would integrate with alert storage)."""
+    try:
+        # This would integrate with an alert storage system
+        # For now, return empty list
+        return {
+            "success": True,
+            "alerts": [],
+            "count": 0,
+            "message": "Alert storage integration pending",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Failed to get recent alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/alerts/test-email")
+async def test_email_alert(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Send a test email alert."""
+    try:
+        # Test email service
+        email_test = await engine.email_service.test_connection()
+        
+        if not email_test.get('configured', False):
+            return {
+                "success": False,
+                "message": "Email service not configured properly",
+                "details": email_test,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Send test email
+        test_context = {
+            "alert": {
+                "title": "Test Alert",
+                "description": "This is a test alert to verify email configuration",
+                "severity": "HIGH",
+                "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            },
+            "monitoring_url": "http://localhost:8000/monitoring",
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        }
+        
+        await engine.email_service.send_test_alert(test_context)
+        
+        return {
+            "success": True,
+            "message": "Test email sent successfully",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"Failed to send test email: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# UTILITY ENDPOINTS
+# ==========================================
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint."""
     return {
-        "alerts": [],
-        "total": 0,
-        "skip": pagination["skip"],
-        "limit": pagination["limit"]
+        "status": "healthy",
+        "service": "GCP Log Monitoring System",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "2.0.0"
     }
 
 
-@router.post("/alerts/preview")
-async def preview_alert(
-    request: AlertPreviewRequest,
-    _: bool = Depends(validate_openai_config_dep)
-):
-    """Preview alert content before sending."""
-    # TODO: Implement alert preview in Phase 3
-    return {
-        "success": False,
-        "message": "Alert preview not implemented yet",
-        "html_content": None,
-        "markdown_content": None
-    }
-
-
-@router.post("/alerts/send")
-async def send_alert(
-    request: AlertSendRequest,
-    _: bool = Depends(validate_email_config)
-):
-    """Send an alert via email."""
-    # TODO: Implement alert sending in Phase 4
-    return {
-        "success": False,
-        "message": "Alert sending not implemented yet",
-        "delivery_id": None
-    }
-
-
-@router.get("/alerts/{alert_id}")
-async def get_alert_details(alert_id: str):
-    """Get detailed information about a specific alert."""
-    # TODO: Implement in Phase 3
-    raise HTTPException(status_code=404, detail="Alert not found")
-
-
-# Configuration and Settings
-
-@router.get("/config")
-async def get_configuration(settings: Settings = Depends(get_current_settings)):
-    """Get current system configuration (sanitized)."""
-    return {
-        "app_name": settings.app_name,
-        "app_version": settings.app_version,
-        "log_buffer_minutes": settings.log_buffer_minutes,
-        "max_buffer_size": settings.max_buffer_size,
-        "anomaly_check_interval": settings.anomaly_check_interval,
-        "error_rate_threshold": settings.error_rate_threshold,
-        "latency_threshold_ms": settings.latency_threshold_ms,
-        "repeated_error_threshold": settings.repeated_error_threshold,
-        "email_rate_limit_minutes": settings.email_rate_limit_minutes,
-        # Don't expose sensitive information
-        "openai_configured": bool(settings.openai_api_key),
-        "sendgrid_configured": bool(settings.sendgrid_api_key),
-        "gcp_configured": bool(settings.gcp_project_id and settings.gcp_service_account_path)
-    }
-
-
-@router.post("/config/validate")
-async def validate_configuration():
-    """Validate all system configurations."""
-    from app.config import validate_gcp_credentials, validate_openai_config, validate_sendgrid_config
-    
-    validations = {
-        "gcp": validate_gcp_credentials(),
-        "openai": validate_openai_config(),
-        "sendgrid": validate_sendgrid_config()
-    }
-    
-    all_valid = all(validations.values())
-    
-    return {
-        "valid": all_valid,
-        "details": validations,
-        "message": "All configurations valid" if all_valid else "Some configurations are invalid"
-    }
-
-
-# Development and Testing Endpoints (only available in debug mode)
-
-@router.get("/debug/trigger-test-anomaly")
-async def trigger_test_anomaly(settings: Settings = Depends(get_current_settings)):
-    """Trigger a test anomaly for development purposes."""
-    if not settings.debug:
-        raise HTTPException(status_code=404, detail="Endpoint not available in production")
-    
-    # TODO: Implement test anomaly generation in Phase 2
-    return {"message": "Test anomaly triggered", "anomaly_id": "test-123"}
-
-
-@router.get("/debug/system-info")
-async def get_debug_info(settings: Settings = Depends(get_current_settings)):
-    """Get detailed system information for debugging."""
-    if not settings.debug:
-        raise HTTPException(status_code=404, detail="Endpoint not available in production")
-    
-    import sys
-    import os
-    
-    return {
-        "python_version": sys.version,
-        "working_directory": os.getcwd(),
-        "environment_variables": [k for k in os.environ.keys() if not k.startswith('OPENAI') and not k.startswith('SENDGRID')],
-        "settings": settings.dict(exclude={"openai_api_key", "sendgrid_api_key"})
-    }
+@router.get("/info")
+async def get_system_info(engine: MonitoringEngine = Depends(get_monitoring_engine)):
+    """Get system information and capabilities."""
+    try:
+        stats = await engine.get_monitoring_stats()
+        
+        return {
+            "success": True,
+            "system_info": {
+                "service_name": "GCP Log Monitoring System",
+                "version": "2.0.0",
+                "capabilities": [
+                    "File log ingestion",
+                    "GCP Cloud Logging integration", 
+                    "Real-time log streaming",
+                    "Hybrid anomaly detection",
+                    "AI-powered analysis",
+                    "Email alerting",
+                    "WebSocket real-time updates"
+                ],
+                "monitoring_stats": stats
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"Failed to get system info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -129,10 +129,12 @@ class Anomaly(BaseModel):
     affected_logs_count: int
     metric_value: Optional[float] = None
     threshold_value: Optional[float] = None
+    confidence: float = Field(default=0.8, description="Confidence score (0.0-1.0)")
     
     # Context
     resource_type: ResourceType
     resource_labels: Dict[str, str] = Field(default_factory=dict)
+    affected_resources: List[str] = Field(default_factory=list, description="List of affected resource types/names")
     time_window_minutes: int = Field(default=10)
     
     # Related data
@@ -144,6 +146,16 @@ class Anomaly(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+
+
+class AlertType(str, Enum):
+    """Types of alerts generated."""
+    ERROR_RATE = "error_rate"
+    VOLUME_SPIKE = "volume_spike"
+    LATENCY_SPIKE = "latency_spike"
+    RESOURCE_EXHAUSTION = "resource_exhaustion"
+    REPEATED_ERRORS = "repeated_errors"
+    GENERAL = "general"
 
 
 class AlertStatus(str, Enum):
@@ -159,6 +171,9 @@ class Alert(BaseModel):
     """Generated alert with AI analysis."""
     id: str = Field(..., description="Unique alert identifier")
     anomaly_id: str = Field(..., description="Related anomaly ID")
+    
+    # Alert classification
+    alert_type: AlertType = AlertType.GENERAL
     
     # Alert content
     title: str

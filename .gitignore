@@ -1,3 +1,16 @@
 .env
 .gitignore.DS_Store
 examples/*.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# macOS
+.DS_Store
+
+# Test cache
+.pytest_cache/
