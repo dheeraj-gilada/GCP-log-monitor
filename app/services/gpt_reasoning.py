@@ -6,7 +6,7 @@ Provides root cause analysis and actionable recommendations.
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 
@@ -119,8 +119,8 @@ class GPTReasoningService:
             "description": anomaly.description,
             "affected_resources": anomaly.affected_resources,
             "time_window": {
-                "start": anomaly.time_window_start.isoformat(),
-                "end": anomaly.time_window_end.isoformat()
+                "start": anomaly.timestamp.isoformat(),
+                "end": (anomaly.timestamp + timedelta(minutes=anomaly.time_window_minutes)).isoformat()
             },
             "metrics": anomaly.metrics,
             "detection_method": anomaly.detection_method

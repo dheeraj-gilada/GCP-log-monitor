@@ -16,6 +16,7 @@ import statistics
 
 from app.config import get_settings
 from app.models.schemas import LogEntry, LogSeverity, ResourceType, Anomaly, AnomalyType, AnomalySeverity, DetectionMethod
+from app.core.metrics_calculator import MetricsCalculator
 from app.services.gpt_reasoning import GPTReasoningService
 
 
@@ -57,6 +58,7 @@ class PatternDetector:
     def __init__(self):
         self.known_patterns = set()
         self.error_signatures = []
+        self.metrics_calculator = MetricsCalculator()
     
     def analyze_patterns(self, logs: List[LogEntry]) -> Dict[str, Any]:
         """Analyze logs for unusual patterns."""
@@ -154,61 +156,15 @@ class PatternDetector:
     
     def _analyze_http_patterns(self, logs: List[LogEntry]) -> Dict[str, Any]:
         """Analyze HTTP request patterns for anomalies."""
-        http_logs = [log for log in logs if log.http_request]
-        
-        if not http_logs:
-            return {}
-        
-        status_codes = Counter(log.http_request.status for log in http_logs)
-        methods = Counter(log.http_request.method for log in http_logs)
-        
-        # Calculate error rates
-        total_requests = len(http_logs)
-        error_requests = len([log for log in http_logs if log.http_request.status >= 400])
-        server_errors = len([log for log in http_logs if log.http_request.status >= 500])
-        
-        return {
-            "total_requests": total_requests,
-            "error_rate": error_requests / total_requests if total_requests > 0 else 0,
-            "server_error_rate": server_errors / total_requests if total_requests > 0 else 0,
-            "status_distribution": dict(status_codes),
-            "method_distribution": dict(methods),
-            "anomalous_status_codes": [code for code, count in status_codes.items() 
-                                     if code >= 500 and count > total_requests * 0.01]
-        }
+        return self.metrics_calculator.calculate_http_metrics(logs)
     
     def _analyze_resource_patterns(self, logs: List[LogEntry]) -> Dict[str, Any]:
         """Analyze resource-specific patterns."""
-        resource_stats = defaultdict(lambda: {
-            "total_logs": 0,
-            "error_logs": 0,
-            "error_rate": 0,
-            "common_errors": []
-        })
-        
-        for log in logs:
-            resource_key = f"{log.resource.type.value}:{log.resource.labels.get('instance_id', 'unknown')}"
-            resource_stats[resource_key]["total_logs"] += 1
-            
-            if log.severity in [LogSeverity.ERROR, LogSeverity.CRITICAL]:
-                resource_stats[resource_key]["error_logs"] += 1
-        
-        # Calculate error rates
-        for resource_key, stats in resource_stats.items():
-            if stats["total_logs"] > 0:
-                stats["error_rate"] = stats["error_logs"] / stats["total_logs"]
-        
-        return dict(resource_stats)
+        return self.metrics_calculator.calculate_resource_metrics(logs)
     
     def _calculate_pattern_confidence(self, error_patterns: List[Dict], repeated_errors: List[Dict]) -> float:
         """Calculate confidence score for detected patterns."""
-        if not error_patterns and not repeated_errors:
-            return 0.0
-        
-        pattern_score = min(len(error_patterns) / 5.0, 1.0)  # Up to 5 patterns = 100%
-        repetition_score = min(len(repeated_errors) / 3.0, 1.0)  # Up to 3 repeated patterns = 100%
-        
-        return (pattern_score + repetition_score) / 2.0
+        return self.metrics_calculator.calculate_pattern_confidence(error_patterns, repeated_errors)
 
 
 class StatisticalDetector:
@@ -216,6 +172,7 @@ class StatisticalDetector:
     
     def __init__(self, thresholds: DetectionThresholds):
         self.thresholds = thresholds
+        self.metrics_calculator = MetricsCalculator()
     
     def detect_anomalies(self, logs: List[LogEntry], baseline_metrics: Optional[Dict] = None) -> List[Dict[str, Any]]:
         """Detect statistical anomalies in logs."""
@@ -248,24 +205,27 @@ class StatisticalDetector:
     
     def _detect_error_rate_spike(self, logs: List[LogEntry]) -> Optional[Dict[str, Any]]:
         """Detect spikes in error rate."""
-        total_logs = len(logs)
-        error_logs = len([log for log in logs if log.severity in [LogSeverity.ERROR, LogSeverity.CRITICAL]])
+        error_metrics = self.metrics_calculator.calculate_error_rate(logs)
         
-        if total_logs == 0:
+        if error_metrics["total_logs"] == 0:
             return None
         
-        error_rate = error_logs / total_logs
+        error_rate = error_metrics["error_rate"]
         
         if error_rate > self.thresholds.error_rate_threshold:
+            confidence = self.metrics_calculator.calculate_anomaly_confidence(
+                error_rate, self.thresholds.error_rate_threshold, "threshold"
+            )
+            
             return {
                 "rule": AnomalyRule.ERROR_RATE_SPIKE,
                 "severity": AnomalySeverity.HIGH if error_rate > 0.2 else AnomalySeverity.MEDIUM,
-                "confidence": min(error_rate / self.thresholds.error_rate_threshold, 1.0),
+                "confidence": confidence,
                 "metrics": {
                     "current_error_rate": error_rate,
                     "threshold": self.thresholds.error_rate_threshold,
-                    "total_logs": total_logs,
-                    "error_logs": error_logs
+                    "total_logs": error_metrics["total_logs"],
+                    "error_logs": error_metrics["error_logs"]
                 },
                 "description": f"Error rate spike detected: {error_rate:.2%} (threshold: {self.thresholds.error_rate_threshold:.2%})"
             }
@@ -281,19 +241,18 @@ class StatisticalDetector:
         
         baseline_volume = baseline_metrics["average_volume"]
         
-        if baseline_volume > 0 and current_volume > baseline_volume * self.thresholds.volume_spike_multiplier:
-            spike_ratio = current_volume / baseline_volume
+        volume_spike = self.metrics_calculator.detect_volume_spike(
+            current_volume, baseline_volume, self.thresholds.volume_spike_multiplier
+        )
+        
+        if volume_spike:
+            spike_ratio = volume_spike["spike_ratio"]
             
             return {
                 "rule": AnomalyRule.VOLUME_SPIKE,
                 "severity": AnomalySeverity.HIGH if spike_ratio > 5.0 else AnomalySeverity.MEDIUM,
-                "confidence": min(spike_ratio / self.thresholds.volume_spike_multiplier, 1.0),
-                "metrics": {
-                    "current_volume": current_volume,
-                    "baseline_volume": baseline_volume,
-                    "spike_ratio": spike_ratio,
-                    "threshold_multiplier": self.thresholds.volume_spike_multiplier
-                },
+                "confidence": volume_spike["confidence"],
+                "metrics": volume_spike,
                 "description": f"Log volume spike detected: {spike_ratio:.1f}x baseline volume"
             }
         
@@ -301,30 +260,16 @@ class StatisticalDetector:
     
     def _detect_latency_spike(self, logs: List[LogEntry]) -> Optional[Dict[str, Any]]:
         """Detect latency spikes in HTTP requests."""
-        http_logs = [log for log in logs if log.http_request and hasattr(log.http_request, 'latency')]
+        latency_spike = self.metrics_calculator.detect_latency_spike(logs, self.thresholds.latency_threshold_ms)
         
-        if len(http_logs) < 10:  # Need sufficient data
-            return None
-        
-        latencies = [log.http_request.latency for log in http_logs if log.http_request.latency]
-        
-        if not latencies:
-            return None
-        
-        avg_latency = statistics.mean(latencies)
-        p95_latency = statistics.quantiles(latencies, n=20)[18]  # 95th percentile
-        
-        if p95_latency > self.thresholds.latency_threshold_ms:
+        if latency_spike:
+            p95_latency = latency_spike["p95_latency_ms"]
+            
             return {
                 "rule": AnomalyRule.LATENCY_SPIKE,
                 "severity": AnomalySeverity.HIGH if p95_latency > self.thresholds.latency_threshold_ms * 2 else AnomalySeverity.MEDIUM,
-                "confidence": min(p95_latency / self.thresholds.latency_threshold_ms, 1.0),
-                "metrics": {
-                    "p95_latency_ms": p95_latency,
-                    "avg_latency_ms": avg_latency,
-                    "threshold_ms": self.thresholds.latency_threshold_ms,
-                    "sample_size": len(latencies)
-                },
+                "confidence": latency_spike["confidence"],
+                "metrics": latency_spike,
                 "description": f"Latency spike detected: P95 latency {p95_latency:.0f}ms (threshold: {self.thresholds.latency_threshold_ms:.0f}ms)"
             }
         
@@ -368,6 +313,7 @@ class AnomalyDetectionService:
         self.statistical_detector = StatisticalDetector(self.thresholds)
         self.pattern_detector = PatternDetector()
         self.gpt_service = GPTReasoningService()
+        self.metrics_calculator = MetricsCalculator()
         
         # Baseline metrics for comparison
         self.baseline_metrics = {}
@@ -428,6 +374,21 @@ class AnomalyDetectionService:
                 log for log in logs if log.severity in [LogSeverity.ERROR, LogSeverity.CRITICAL]
             ][:10]
             
+            # Extract metric and threshold values based on anomaly type
+            metrics = stat_anomaly.get("metrics", {})
+            metric_value = None
+            threshold_value = None
+            
+            if stat_anomaly["rule"] == AnomalyRule.ERROR_RATE_SPIKE:
+                metric_value = metrics.get("current_error_rate")
+                threshold_value = metrics.get("threshold")
+            elif stat_anomaly["rule"] == AnomalyRule.VOLUME_SPIKE:
+                metric_value = metrics.get("current_volume")
+                threshold_value = metrics.get("baseline_volume")
+            elif stat_anomaly["rule"] == AnomalyRule.LATENCY_SPIKE:
+                metric_value = metrics.get("p95_latency_ms")
+                threshold_value = metrics.get("threshold_ms")
+            
             return Anomaly(
                 id=f"{anomaly_type.value}_{int(datetime.now(timezone.utc).timestamp())}",
                 type=anomaly_type,
@@ -437,8 +398,8 @@ class AnomalyDetectionService:
                 description=stat_anomaly["description"],
                 timestamp=min(log.timestamp for log in logs) if logs else datetime.now(timezone.utc),
                 affected_logs_count=len(sample_logs),
-                metric_value=stat_anomaly.get("metrics", {}).get("value"),
-                threshold_value=stat_anomaly.get("metrics", {}).get("threshold"),
+                metric_value=metric_value,
+                threshold_value=threshold_value,
                 confidence=stat_anomaly.get("confidence", 0.8),
                 resource_type=sample_logs[0].resource.type if sample_logs else ResourceType.UNKNOWN,
                 resource_labels=sample_logs[0].resource.labels if sample_logs else {},
@@ -563,12 +524,7 @@ class AnomalyDetectionService:
         if not logs:
             return
         
-        self.baseline_metrics = {
-            "average_volume": len(logs),
-            "average_error_rate": len([log for log in logs if log.severity == LogSeverity.ERROR]) / len(logs),
-            "common_resources": Counter(log.resource.type.value for log in logs),
-            "updated_at": datetime.utcnow()
-        }
+        self.baseline_metrics = self.metrics_calculator.calculate_baseline_metrics(logs)
     
     def configure_thresholds(self, **threshold_updates):
         """Update detection thresholds."""
