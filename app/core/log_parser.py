@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, Union
 from collections import defaultdict
 
 from app.models.schemas import LogEntry, LogSeverity, LogResource, ResourceType, HTTPRequest
-from app.services.gcp_service import GCPLogParser, GCPResourceExtractor
+from app.models.gcp_models import GCPLogParser, GCPResourceExtractor
 
 
 class LogParser:

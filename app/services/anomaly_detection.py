@@ -12,7 +12,6 @@ from collections import defaultdict, Counter
 from dataclasses import dataclass
 from enum import Enum
 import re
-import statistics
 
 from app.config import get_settings
 from app.models.schemas import LogEntry, LogSeverity, ResourceType, Anomaly, AnomalyType, AnomalySeverity, DetectionMethod

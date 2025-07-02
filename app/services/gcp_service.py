@@ -10,10 +10,12 @@ from typing import List, Dict, Any, Optional, AsyncGenerator, Callable
 from google.cloud import logging as gcp_logging
 from google.auth.exceptions import DefaultCredentialsError
 import json
+import os
 
 from app.config import get_settings
 from app.models.schemas import LogEntry, LogSeverity, ResourceType
 from app.models.gcp_models import GCPLogParser, GCPResourceExtractor
+from app.core.metrics_calculator import MetricsCalculator
 
 
 class GCPLogStreamConfig:
@@ -42,6 +44,7 @@ class GCPService:
         self.client = None
         self.parser = GCPLogParser()
         self.extractor = GCPResourceExtractor()
+        self.metrics_calculator = MetricsCalculator()
         self._streaming = False
         self._stream_config: Optional[GCPLogStreamConfig] = None
         self._log_callback: Optional[Callable] = None
@@ -392,36 +395,26 @@ class GCPService:
                 max_entries=5000
             )
             
-            # Calculate metrics
-            total_logs = len(logs)
-            error_logs = len([log for log in logs if log.severity == LogSeverity.ERROR])
-            warning_logs = len([log for log in logs if log.severity == LogSeverity.WARNING])
+            # Use MetricsCalculator for all calculations
+            error_rate_metrics = self.metrics_calculator.calculate_error_rate(logs)
+            resource_metrics = self.metrics_calculator.calculate_resource_metrics(logs)
+            volume_metrics = self.metrics_calculator.calculate_volume_metrics(logs, window_minutes=hours * 60)
+            time_window_stats = self.metrics_calculator.calculate_time_window_stats(logs)
             
-            # Group by resource type
-            resource_metrics = {}
-            for log in logs:
-                resource_type = log.resource.type.value if log.resource.type else "unknown"
-                if resource_type not in resource_metrics:
-                    resource_metrics[resource_type] = {
-                        "total": 0,
-                        "errors": 0,
-                        "warnings": 0
-                    }
-                
-                resource_metrics[resource_type]["total"] += 1
-                if log.severity == LogSeverity.ERROR:
-                    resource_metrics[resource_type]["errors"] += 1
-                elif log.severity == LogSeverity.WARNING:
-                    resource_metrics[resource_type]["warnings"] += 1
+            # Extract specific counts for backward compatibility
+            warning_logs = len([log for log in logs if log.severity == LogSeverity.WARNING])
             
             return {
                 "time_period_hours": hours,
-                "total_logs": total_logs,
-                "error_logs": error_logs,
+                "total_logs": error_rate_metrics["total_logs"],
+                "error_logs": error_rate_metrics["error_logs"],
                 "warning_logs": warning_logs,
-                "error_rate": error_logs / total_logs if total_logs > 0 else 0,
-                "warning_rate": warning_logs / total_logs if total_logs > 0 else 0,
+                "error_rate": error_rate_metrics["error_rate"],
+                "warning_rate": warning_logs / error_rate_metrics["total_logs"] if error_rate_metrics["total_logs"] > 0 else 0,
                 "resource_metrics": resource_metrics,
+                "volume_metrics": volume_metrics,
+                "severity_distribution": error_rate_metrics["severity_distribution"],
+                "time_window_stats": time_window_stats,
                 "start_time": start_time,
                 "end_time": end_time
             }
