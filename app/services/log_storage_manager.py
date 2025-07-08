@@ -5,8 +5,18 @@ from app.models.log_models import NormalizedLogEntry
 
 class LogStorageManager:
     def __init__(self, redis_url: str, buffer_size: int = 1000):
-        self.redis = aioredis.from_url(redis_url, decode_responses=True)
+        import redis.asyncio as aioredis
+        self.redis_url = redis_url
         self.buffer_size = buffer_size
+        self.redis = aioredis.from_url(redis_url, decode_responses=True)
+        # Debug log for Redis DB selection
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(redis_url)
+            db_num = parsed.path.lstrip('/') if parsed.path else '0'
+            print(f"[DEBUG][LogStorageManager] Connecting to Redis at {parsed.hostname}:{parsed.port}, DB {db_num} (URL: {redis_url})")
+        except Exception as e:
+            print(f"[DEBUG][LogStorageManager] Could not parse Redis URL: {redis_url} ({e})")
 
     async def get_current_max_index(self) -> int:
         max_index = await self.redis.get("log_buffer:max_index")
