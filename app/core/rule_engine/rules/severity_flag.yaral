@@ -1,0 +1,13 @@
+rule severity_flag {
+  meta:
+    name = "severity_flag"
+    author = "AI Assistant"
+    description = "Flags any log with severity WARNING, ERROR, CRITICAL, ALERT, or EMERGENCY."
+    severity = "HIGH"
+
+  events:
+    ($severity = "WARNING") or ($severity = "ERROR") or ($severity = "CRITICAL") or ($severity = "ALERT") or ($severity = "EMERGENCY")
+
+  condition:
+    all of them
+} 

@@ -1,0 +1,15 @@
+rule http_error_spike_normalized {
+  meta:
+    name = "http_error_spike_normalized"
+    author = "Custom"
+    description = "Detects spikes in 4xx/5xx error rates in normalized logs."
+    severity = "HIGH"
+
+  events:
+    $severity = "ERROR"
+    $message matches /HTTP\s(4|5)\d\d/
+    $resource_type contains "load_balancer"  // or relevant resource
+
+  condition:
+    all of them
+} 

@@ -1,0 +1,14 @@
+rule api_anomaly {
+  meta:
+    name = "api_anomaly"
+    author = "AI Assistant"
+    description = "Detects API usage anomalies such as invalid requests or deprecated API usage."
+    severity = "MEDIUM"
+
+  events:
+    $severity in ("ERROR", "WARNING")
+    $message matches /invalid api|deprecated api|invalid request|malformed request/i
+
+  condition:
+    all of them
+} 

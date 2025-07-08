@@ -1,0 +1,32 @@
+/* Background Styles */
+
+/* Main background */
+.magicui-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(125deg, #ecfdf5 0%, #d1fae5 100%);
+    z-index: -1;
+    opacity: 0.8;
+    animation: magicui-bg-move 20s ease infinite;
+}
+
+@keyframes magicui-bg-move {
+    0% { background-position: 0% 50% }
+    50% { background-position: 100% 50% }
+    100% { background-position: 0% 50% }
+}
+
+/* Shimmer effect */
+.shimmer {
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -100% 0; }
+    100% { background-position: 100% 0; }
+} 

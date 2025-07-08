@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Main GCP Log Monitoring Application
   gcp-log-monitor:
@@ -10,7 +8,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Load environment variables from .env file
+      - REDIS_URL=redis://gcp-monitor-redis:6379/0
+      - TIMESCALEDB_URL=postgresql://postgres:password@gcp-monitor-timescaledb:5432/gcp_monitor
       - PYTHONPATH=/app
     env_file:
       - .env
@@ -28,24 +27,47 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - gcp-monitor-network
 
-  # Optional: Add Redis for caching (uncomment when needed in later phases)
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: gcp-monitor-redis
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
-  #   networks:
-  #     - gcp-monitor-network
+  redis:
+    image: redis:7.4.4
+    container_name: gcp-monitor-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - gcp-monitor-network
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: gcp-monitor-timescaledb
+    environment:
+      - POSTGRES_DB=gcp_logs
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - gcp-monitor-network
 
 networks:
   gcp-monitor-network:
     driver: bridge
 
-# volumes:
-#   redis_data:
+volumes:
+  redis_data:
+  timescale_data:

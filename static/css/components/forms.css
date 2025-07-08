@@ -1,0 +1,179 @@
+/* Form Styles */
+#setup-form {
+    background: #fff;
+    border-radius: 12px;
+    padding: 2rem 1.5rem;
+    box-shadow: 0 2px 8px 0 rgba(16,185,129,0.06);
+    border: 1px solid #e5e7eb;
+}
+
+/* Form Groups */
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 0.3rem;
+}
+
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 1rem;
+    background: #fff;
+    transition: border 0.2s, box-shadow 0.2s;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #10b981;
+    box-shadow: 0 0 0 2px rgba(16,185,129,0.08);
+}
+
+/* Section Styles */
+.form-section {
+    margin-bottom: 1.5rem;
+}
+
+.form-section h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #22292f;
+    margin-bottom: 0.75rem;
+    border-left: 3px solid #10b981;
+    padding-left: 0.5rem;
+    background: none;
+}
+
+.form-section h2::before {
+    content: '';
+    width: 4px;
+    height: 20px;
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    border-radius: 2px;
+}
+
+/* Mode Switch */
+.mode-switch {
+    display: flex;
+    background: #f3f4f6;
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 1.5rem;
+    position: relative;
+}
+
+.mode-switch input[type="radio"] {
+    display: none;
+}
+
+.mode-switch label {
+    flex: 1;
+    text-align: center;
+    padding: 12px 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 500;
+    color: #6b7280;
+    position: relative;
+    z-index: 1;
+}
+
+.mode-switch input[type="radio"]:checked + label {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    color: white;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.mode-switch.magicui-mode-animate label {
+    overflow: hidden;
+}
+
+.mode-switch.magicui-mode-animate input[type="radio"]:checked + label {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    color: white;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* File Upload */
+.file-upload {
+    border: 1.5px dashed #10b981;
+    border-radius: 6px;
+    padding: 1.2rem;
+    text-align: center;
+    transition: border 0.2s, background 0.2s;
+    cursor: pointer;
+    background: #fafafa;
+}
+
+.file-upload:hover, .file-upload.dragover {
+    border-color: #059669;
+    background: #f0fdf4;
+}
+
+.file-upload.dragover {
+    border-color: #10b981;
+    background: #f0fdf4;
+    transform: scale(1.02);
+}
+
+.file-upload input[type="file"] {
+    display: none;
+}
+
+.file-upload-text {
+    color: #6b7280;
+    font-size: 0.92rem;
+}
+
+.file-upload.magicui-upload-animate:hover, .file-upload.magicui-upload-animate.dragover {
+    border-color: #10b981;
+    background: linear-gradient(
+        135deg,
+        rgba(240, 253, 244, 0.8) 0%,
+        rgba(220, 252, 231, 0.8) 100%
+    );
+    transform: scale(1.01);
+}
+
+/* Status Messages */
+.status-message {
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-top: 1rem;
+    font-weight: 500;
+    font-size: 0.98rem;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+}
+
+.status-message.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.status-message.success {
+    background: #e6f9f1;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+.status-message.error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
+/* Hidden sections */
+.hidden {
+    display: none;
+} 

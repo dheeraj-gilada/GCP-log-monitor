@@ -1,0 +1,15 @@
+/* Main Stylesheet - Imports all component styles */
+
+/* Base styles */
+@import 'base.css';
+
+/* Component styles */
+@import 'components/backgrounds.css';
+@import 'components/buttons.css';
+@import 'components/forms.css';
+@import 'components/header.css';
+@import 'components/alerts.css';
+@import 'components/log-viewer.css';
+@import 'components/monitoring.css';
+
+/* This file now only serves as a central import point */

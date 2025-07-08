@@ -1,0 +1,13 @@
+rule severity_mapping {
+  meta:
+    name = "severity_mapping"
+    author = "AI Assistant"
+    description = "Flags all high-severity GCP log levels for alerting."
+    severity = "HIGH"
+
+  events:
+    $severity in ("CRITICAL", "ALERT", "EMERGENCY")
+
+  condition:
+    all of them
+} 

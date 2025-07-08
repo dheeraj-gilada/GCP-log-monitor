@@ -1,6 +1,10 @@
 .env
 .gitignore.DS_Store
 examples/*.json
+gcp-sample-logs/
+test_credentials.json
+tests/
+scripts/
 
 # Python cache
 __pycache__/

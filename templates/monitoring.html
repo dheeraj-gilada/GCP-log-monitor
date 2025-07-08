@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCP Log Monitoring Dashboard</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components/backgrounds.css">
+    <link rel="stylesheet" href="/static/css/components/buttons.css">
+    <link rel="stylesheet" href="/static/css/components/forms.css">
+    <link rel="stylesheet" href="/static/css/components/header.css">
+    <link rel="stylesheet" href="/static/css/components/alerts.css">
+    <link rel="stylesheet" href="/static/css/components/log-viewer.css">
+    <link rel="stylesheet" href="/static/css/components/monitoring.css">
+</head>
+<body>
+    {% include 'components/magicui_background.html' %}
+    
+    <div class="dashboard-container">
+        {% include 'components/header.html' %}
+        
+        <!-- Dashboard metrics section -->
+        <section class="metrics-section">
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <h3>Total Logs</h3>
+                    <div class="metric-value" id="log-count">0</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Error Rate</h3>
+                    <div class="metric-value" id="error-rate">0%</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Avg. Processing Time</h3>
+                    <div class="metric-value" id="processing-time">0ms</div>
+                </div>
+                <div class="metric-card">
+                    <h3>Anomalies Detected</h3>
+                    <div class="metric-value" id="anomaly-count">0</div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Main content grid -->
+        <div class="dashboard-grid">
+            <!-- Log viewer -->
+            <div class="dashboard-column main-column">
+                {% include 'components/log-viewer.html' %}
+            </div>
+            
+            <!-- Sidebar with alerts -->
+            <div class="dashboard-column side-column">
+                {% include 'components/alert-preview.html' %}
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/js/monitoring.js" type="module"></script>
+</body>
+</html>

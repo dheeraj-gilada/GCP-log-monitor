@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCP SIEM Setup</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components/backgrounds.css">
+    <link rel="stylesheet" href="/static/css/components/buttons.css">
+    <link rel="stylesheet" href="/static/css/components/forms.css">
+    <link rel="stylesheet" href="/static/css/components/header.css">
+    <link rel="stylesheet" href="/static/css/components/alerts.css">
+    <link rel="stylesheet" href="/static/css/components/log-viewer.css">
+    <link rel="stylesheet" href="/static/css/components/monitoring.css">
+    <style>
+        .top-bar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #e5e7eb;
+            border-radius: 24px;
+            transition: background 0.2s;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 2px;
+            bottom: 2px;
+            background: #fff;
+            border-radius: 50%;
+            box-shadow: 0 1px 4px rgba(16,185,129,0.08);
+            transition: transform 0.2s;
+        }
+        input:checked + .slider {
+            background: #10b981;
+        }
+        input:checked + .slider:before {
+            transform: translateX(24px);
+        }
+        .mode-label {
+            font-size: 0.98rem;
+            color: #374151;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    {% include 'components/magicui_background.html' %}
+    <main class="setup-container">
+        {% include 'components/header.html' %}
+        <div class="top-bar">
+            <div class="mode-toggle">
+                <span class="mode-label" id="mode-label-live">Live GCP Logs</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="mode-toggle-checkbox">
+                    <span class="slider"></span>
+                </label>
+                <span class="mode-label" id="mode-label-sim">Log Simulation</span>
+            </div>
+        </div>
+        <form id="setup-form" autocomplete="off">
+            <!-- GCP Credentials (Live Mode) -->
+            <div id="gcp-credentials-section" class="form-section">
+                <h2>GCP Configuration</h2>
+                <div class="form-group">
+                    <label for="gcp-credentials">Service Account JSON</label>
+                    <div class="file-upload" id="gcp-credentials-upload-area">
+                        <input type="file" id="gcp-credentials" accept=".json" style="display:none;"> <!-- reverted to hidden after debug -->
+                        <div class="file-upload-text" id="gcp-credentials-upload-text">
+                            <strong>Click to upload</strong> or drag and drop your GCP service account JSON file
+                        </div>
+                        <span id="gcp-credentials-filename" style="display:block;margin-top:0.5rem;color:#374151;font-size:0.97rem;"></span>
+                        <!-- Remove static status and spinner, JS will handle -->
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="project-id">Project ID</label>
+                    <select id="project-id" required>
+                        <option value="" disabled selected>Select a project</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="resource-type">Resource Type</label>
+                    <select id="resource-type">
+                        <option value="" disabled selected>Select resource type</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="severity">Severity</label>
+                    <select id="severity">
+                        <option value="" disabled selected>Select severity</option>
+                    </select>
+                </div>
+            </div>
+            <!-- Log Simulation (Simulation Mode) -->
+            <div id="simulation-upload-section" class="form-section hidden">
+                <h2>Upload Log Files</h2>
+                <div class="form-group">
+                    <label for="simulation-logs">Log Files (.json or .txt)</label>
+                    <div class="file-upload" onclick="document.getElementById('simulation-logs').click()">
+                        <input type="file" id="simulation-logs" accept=".json,.txt" multiple>
+                        <div class="file-upload-text">
+                            <strong>Click to upload</strong> or drag and drop your log files for simulation
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Alert Configuration -->
+            <div class="form-section">
+                <h2>Alert Configuration</h2>
+                <div class="form-group">
+                    <label for="alert-email">Email for Alerts</label>
+                    <input type="email" id="alert-email" placeholder="your-email@example.com" required>
+                </div>
+                <button type="button" id="send-test-alert-btn" class="submit-btn magicui-shiny-btn" style="margin-top: 0.5rem;">
+                  <span class="magicui-shiny-text">Send Test Alert Email</span>
+                </button>
+            </div>
+            <!-- Submit -->
+            {% include 'components/shiny_button.html' %}
+            <div id="setup-status" class="status-message"></div>
+        </form>
+    </main>
+    <script src="/static/js/main.js" type="module"></script>
+    <script>
+        // Toggle logic for mode switch
+        const modeToggle = document.getElementById('mode-toggle-checkbox');
+        const gcpSection = document.getElementById('gcp-credentials-section');
+        const simSection = document.getElementById('simulation-upload-section');
+        modeToggle.addEventListener('change', function() {
+            if (modeToggle.checked) {
+                gcpSection.classList.add('hidden');
+                simSection.classList.remove('hidden');
+            } else {
+                gcpSection.classList.remove('hidden');
+                simSection.classList.add('hidden');
+            }
+        });
+    </script>
+</body>
+</html>

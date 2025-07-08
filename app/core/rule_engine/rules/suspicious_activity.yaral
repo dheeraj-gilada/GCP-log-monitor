@@ -1,0 +1,14 @@
+rule suspicious_activity {
+  meta:
+    name = "suspicious_activity"
+    author = "AI Assistant"
+    description = "Detects suspicious activity such as brute force or privilege escalation attempts."
+    severity = "CRITICAL"
+
+  events:
+    $severity in ("WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY")
+    $message matches /brute force|multiple failed logins|privilege escalation|escalated privilege|account investigation/i
+
+  condition:
+    all of them
+} 

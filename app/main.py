@@ -1,105 +1,41 @@
-"""
-Main FastAPI application for GCP Log Monitoring system.
-Entry point with middleware, WebSocket, and route configuration.
-"""
-
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-import uvicorn
+from fastapi.responses import HTMLResponse, JSONResponse
+import os
+from app.api import ingestion_routes
+from datetime import datetime
+import logging
+logging.basicConfig(level=logging.INFO)
 
-from app.config import settings
-from app.api.routes import router as api_router
-from app.api.websockets import websocket_router
+app = FastAPI()
 
+# Serve static files
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "../static")), name="static")
 
-# Initialize FastAPI app
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    description="AI-powered GCP log monitoring with anomaly detection",
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None,
-)
+# Set up Jinja2 templates
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "../templates"))
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Templates
-templates = Jinja2Templates(directory="templates")
-
-# Include routers
-app.include_router(api_router, prefix="/api")
-app.include_router(websocket_router, prefix="/ws")
-
+# Include API routers
+app.include_router(ingestion_routes.router, prefix="/api")
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    """Serve the main dashboard."""
-    return templates.TemplateResponse(
-        "index.html", 
-        {"request": request, "title": settings.app_name}
-    )
-
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/monitoring", response_class=HTMLResponse)
-async def monitoring(request: Request):
-    """Serve the monitoring dashboard."""
-    return templates.TemplateResponse(
-        "monitoring.html", 
-        {"request": request, "title": f"{settings.app_name} - Live Monitoring"}
-    )
-
+async def monitoring_dashboard(request: Request):
+    return templates.TemplateResponse("monitoring.html", {"request": request})
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "app": settings.app_name,
-        "version": settings.app_version,
-        "debug": settings.debug
-    }
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize services on startup."""
-    print(f"🚀 Starting {settings.app_name} v{settings.app_version}")
-    
-    # TODO: Initialize monitoring engine
-    # TODO: Validate configurations
-    # TODO: Setup background tasks
-    
-    if settings.debug:
-        print("📊 Debug mode enabled")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
-    print("🛑 Shutting down GCP Log Monitoring system")
-    
-    # TODO: Cleanup monitoring engine
-    # TODO: Close connections
-
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.debug,
-        log_level="debug" if settings.debug else "info"
-    )
+def health():
+    # Simple health check for Redis log storage
+    log_storage = ingestion_routes.adaptive_log_ingestion.log_storage
+    try:
+        # Try to get current max index as a Redis health check
+        import asyncio
+        loop = asyncio.get_event_loop()
+        max_index = loop.run_until_complete(log_storage.get_current_max_index())
+        return JSONResponse({"status": "ok", "redis_max_log_index": max_index})
+    except Exception as e:
+        return JSONResponse({"status": "error", "error": str(e)})

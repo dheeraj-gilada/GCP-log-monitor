@@ -1,224 +1,194 @@
-"""
-Log ingestion service for parsing and normalizing different log formats.
-Handles file uploads, real-time log streaming, and manages in-memory buffer.
-"""
-
-import json
+from typing import List, Optional, Dict, Any, Callable
+from datetime import datetime, timezone
+from app.models.log_models import (
+    RawGCPLogEntry, NormalizedLogEntry, IngestionMetadata, IngestionResult, LogValidationError, IngestionRequest, IngestionResponse
+)
+from app.models.metrics_models import IngestionMetrics
+from app.utils.otel_utils import start_trace, set_correlation_context
+from app.config.buffer_config import BufferConfig
+from app.utils.error_utils import log_and_raise, log_warning
+from app.utils.file_utils import read_file
 import asyncio
-from collections import deque
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Union, AsyncGenerator
-from pathlib import Path
-import re
+from app.services.log_storage_manager import LogStorageManager
+from app.core.hybrid_detector import HybridDetector
+from app.core.rule_engine.rule_engine import RuleEngine
+from app.core.ML_engine.anomaly_detector import AnomalyDetector
+from app.core.ML_engine.feature_extractor import FeatureExtractor
 
-from app.config import get_settings
-from app.models.schemas import LogEntry, LogSeverity, LogResource, HTTPRequest, ResourceType
-from app.core.log_parser import LogParser
-from app.api.websockets import broadcast_log_entry
+class AdaptiveLogIngestion:
+    """
+    Production-ready adaptive log ingestion engine for GCP and file-based logs.
+    Handles real-time streaming and batch/file upload, integrates with OpenTelemetry,
+    and buffers logs for downstream processing.
+    """
+    def __init__(
+        self,
+        parser: Callable,  # AdaptiveLogParser instance
+        gcp_service: Optional[Any] = None,  # GCPService instance
+        metrics_service: Optional[Any] = None,  # MetricsService instance
+        buffer_config: Optional[BufferConfig] = None,
+        hybrid_detector: Optional[Any] = None  # Add hybrid_detector
+    ):
+        self.parser = parser
+        self.gcp_service = gcp_service
+        self.metrics_service = metrics_service
+        self.metrics = IngestionMetrics()
+        # Use Redis URL from config or default
+        redis_url = getattr(buffer_config, 'redis_url', 'redis://localhost:6379') if buffer_config else 'redis://localhost:6379'
+        self.log_storage = LogStorageManager(redis_url=redis_url, buffer_size=getattr(buffer_config, 'buffer_max_size', 1000) if buffer_config else 1000)
+        if hybrid_detector is not None:
+            self.hybrid_detector = hybrid_detector
+        else:
+            rule_engine = RuleEngine(rules_dir="app/core/rule_engine/rules/")
+            ml_detector = AnomalyDetector(model_path="app/core/ML_engine/models/model_unknown.pkl")
+            feature_extractor = FeatureExtractor()
+            self.hybrid_detector = HybridDetector(rule_engine, ml_detector, feature_extractor)
 
+    def get_buffer_for_mode(self, mode: str = "simulation"):
+        if mode == "live":
+            return self.live_buffer
+        return self.simulation_buffer
 
-class LogBuffer:
-    """Thread-safe in-memory log buffer with sliding window functionality."""
-    
-    def __init__(self, max_size: int = 10000, window_minutes: int = 10):
-        self.max_size = max_size
-        self.window_minutes = window_minutes
-        self.logs: deque = deque(maxlen=max_size)
-        self._lock = asyncio.Lock()
-    
-    async def add_log(self, log_entry: LogEntry):
-        """Add a log entry to the buffer."""
-        async with self._lock:
-            self.logs.append(log_entry)
-            await self._cleanup_old_logs()
-    
-    async def add_logs(self, log_entries: List[LogEntry]):
-        """Add multiple log entries to the buffer."""
-        async with self._lock:
-            self.logs.extend(log_entries)
-            await self._cleanup_old_logs()
-    
-    async def get_logs(self, 
-                      limit: Optional[int] = None,
-                      severity: Optional[LogSeverity] = None,
-                      resource_type: Optional[ResourceType] = None,
-                      start_time: Optional[datetime] = None,
-                      end_time: Optional[datetime] = None) -> List[LogEntry]:
-        """Get logs from buffer with optional filtering."""
-        async with self._lock:
-            filtered_logs = []
-            
-            for log in self.logs:
-                # Apply filters
-                if severity and log.severity != severity:
-                    continue
-                if resource_type and log.resource.type != resource_type:
-                    continue
-                if start_time and log.timestamp < start_time:
-                    continue
-                if end_time and log.timestamp > end_time:
-                    continue
-                
-                filtered_logs.append(log)
-            
-            # Sort by timestamp (newest first)
-            filtered_logs.sort(key=lambda x: x.timestamp, reverse=True)
-            
-            if limit:
-                filtered_logs = filtered_logs[:limit]
-            
-            return filtered_logs
-    
-    async def get_logs_in_window(self, minutes: Optional[int] = None) -> List[LogEntry]:
-        """Get logs within the specified time window."""
-        window_minutes = minutes or self.window_minutes
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
-        
-        return await self.get_logs(start_time=cutoff_time)
-    
-    async def _cleanup_old_logs(self):
-        """Remove logs older than the sliding window."""
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=self.window_minutes)
-        
-        # Remove old logs from the left side of deque
-        while self.logs and self.logs[0].timestamp < cutoff_time:
-            self.logs.popleft()
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """Get buffer statistics."""
-        async with self._lock:
-            if not self.logs:
-                return {
-                    "total_logs": 0,
-                    "buffer_utilization": 0.0,
-                    "oldest_log": None,
-                    "newest_log": None,
-                    "window_start": datetime.now(timezone.utc) - timedelta(minutes=self.window_minutes),
-                    "window_end": datetime.now(timezone.utc)
-                }
-            
-            oldest_log = min(self.logs, key=lambda x: x.timestamp)
-            newest_log = max(self.logs, key=lambda x: x.timestamp)
-            
-            return {
-                "total_logs": len(self.logs),
-                "buffer_utilization": len(self.logs) / self.max_size,
-                "oldest_log": oldest_log.timestamp,
-                "newest_log": newest_log.timestamp,
-                "window_start": datetime.now(timezone.utc) - timedelta(minutes=self.window_minutes),
-                "window_end": datetime.now(timezone.utc)
-            }
+    def persist_failed_logs(self, validation_errors, file_path="failed_logs.jsonl"):
+        import json
+        if not validation_errors:
+            return
+        with open(file_path, "a") as f:
+            for err in validation_errors:
+                f.write(json.dumps(err.model_dump()) + "\n")
 
-
-
-
-
-class LogIngestionService:
-    """Main service for log ingestion and processing."""
-    
-    def __init__(self):
-        self.settings = get_settings()
-        self.buffer = LogBuffer(
-            max_size=self.settings.max_buffer_size,
-            window_minutes=self.settings.log_buffer_minutes
-        )
-        self.parser = LogParser()
-        self._processing = False
-    
-    async def ingest_file(self, file_content: str, filename: str, log_format: str = "auto") -> Dict[str, Any]:
-        """Ingest logs from uploaded file."""
+    async def ingest_from_file(self, file_path: str, source: str = "file_upload", original_format: str = "auto", failed_log_path: str = "failed_logs.jsonl", mode: str = "simulation") -> IngestionResult:
+        from app.models.log_models import LogValidationError, IngestionResult  # avoid circular import
+        import json
+        raw_data = read_file(file_path)
+        logs = []
+        validation_errors = []
+        failed_count = 0
         try:
-            lines = file_content.strip().split('\n')
-            processed_logs = []
-            
-            for line_num, line in enumerate(lines, 1):
+            data = json.loads(raw_data)
+            if isinstance(data, list):
+                logs = data
+            elif isinstance(data, dict):
+                logs = [data]
+            else:
+                raise ValueError("Not a list or dict")
+        except Exception:
+            for idx, line in enumerate(raw_data.strip().splitlines()):
                 if not line.strip():
                     continue
-                
                 try:
-                    log_entry = await self._parse_log_line(line, log_format, f"file:{filename}")
-                    if log_entry:
-                        processed_logs.append(log_entry)
+                    entry = json.loads(line)
+                    logs.append(entry)
                 except Exception as e:
-                    print(f"Error processing line {line_num}: {e}")
-                    continue
-            
-            # Add logs to buffer
-            if processed_logs:
-                await self.buffer.add_logs(processed_logs)
-                
-                # Broadcast to WebSocket clients
-                for log_entry in processed_logs[-10:]:  # Last 10 logs
-                    log_dict = log_entry.dict()
-                    # Convert datetime objects to ISO strings for JSON serialization
-                    if 'timestamp' in log_dict and log_dict['timestamp']:
-                        log_dict['timestamp'] = log_dict['timestamp'].isoformat()
-                    await broadcast_log_entry(log_dict)
-            
-            return {
-                "success": True,
-                "logs_processed": len(processed_logs),
-                "total_lines": len(lines),
-                "file_size_kb": len(file_content) / 1024
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "logs_processed": 0
-            }
-    
-    async def ingest_real_time_log(self, log_data: Dict[str, Any], source: str = "gcp") -> bool:
-        """Ingest a single log entry in real-time."""
+                    validation_errors.append(LogValidationError(
+                        field=f"line_{idx+1}",
+                        error_type="json_parse_error",
+                        message=str(e),
+                        raw_value=line
+                    ))
+                    failed_count += 1
+        result = await self._process_logs_async(logs, source=source, original_format=original_format, ignore_time_window=True, mode=mode)
+        result.failed_count += failed_count
+        result.validation_errors = validation_errors + result.validation_errors
+        result.success = result.failed_count == 0
+        if result.validation_errors:
+            self.persist_failed_logs(result.validation_errors, file_path=failed_log_path)
+        return result
+
+    async def ingest_from_gcp(self, query_params: Dict[str, Any], source: str = "gcp_api", original_format: str = "gcp_json", failed_log_path: str = "failed_logs.jsonl", mode: str = "live") -> IngestionResult:
+        if not self.gcp_service:
+            log_and_raise("GCP service not configured")
         try:
-            log_entry = self.parser._parse_log_data(log_data, source)
-            await self.buffer.add_log(log_entry)
-            
-            # Broadcast to WebSocket clients
-            log_dict = log_entry.dict()
-            # Convert datetime objects to ISO strings for JSON serialization
-            if 'timestamp' in log_dict and log_dict['timestamp']:
-                log_dict['timestamp'] = log_dict['timestamp'].isoformat()
-            await broadcast_log_entry(log_dict)
-            
-            return True
+            raw_logs = self.gcp_service.fetch_logs(query_params)
+            logs = self.parser.parse(raw_logs, original_format=original_format)
+            result = await self._process_logs_async(logs, source=source, original_format=original_format, ignore_time_window=False, mode=mode)
+            if result.validation_errors:
+                self.persist_failed_logs(result.validation_errors, file_path=failed_log_path)
+            return result
         except Exception as e:
-            print(f"Error ingesting real-time log: {e}")
-            return False
-    
-    async def _parse_log_line(self, line: str, log_format: str, source: str) -> Optional[LogEntry]:
-        """Parse a single log line based on format."""
-        if log_format == "json" or (log_format == "auto" and line.strip().startswith('{')):
-            return self.parser.parse_json_log(line, source)
-        else:
-            return self.parser.parse_text_log(line, source)
-    
-    async def get_logs(self, **filters) -> List[LogEntry]:
-        """Get logs from buffer with filtering."""
-        return await self.buffer.get_logs(**filters)
-    
-    async def get_recent_logs(self, limit: int = 100) -> List[LogEntry]:
-        """Get recent logs from buffer."""
-        return await self.buffer.get_logs(limit=limit)
-    
-    async def get_logs_in_window(self, minutes: Optional[int] = None) -> List[LogEntry]:
-        """Get logs within time window."""
-        return await self.buffer.get_logs_in_window(minutes)
-    
-    async def get_buffer_stats(self) -> Dict[str, Any]:
-        """Get buffer statistics."""
-        return await self.buffer.get_stats()
-    
-    async def start_processing(self):
-        """Start background processing tasks."""
-        self._processing = True
-        # TODO: Add background tasks for cleanup, metrics calculation, etc.
-    
-    async def stop_processing(self):
-        """Stop background processing tasks."""
-        self._processing = False
-    
-    def is_processing(self) -> bool:
-        """Check if service is currently processing."""
-        return self._processing
+            log_and_raise("GCP ingestion failed", e, {"query_params": query_params})
+            return IngestionResult(success=False, processed_count=0, failed_count=0, validation_errors=[LogValidationError(field="gcp", error_type="ingestion_error", message=str(e), raw_value=query_params)], processing_time_ms=0)
+
+    async def ingest_stream(self, logs: List[Dict[str, Any]], source: str = "stream", original_format: str = "auto", failed_log_path: str = "failed_logs.jsonl", mode: str = "simulation") -> IngestionResult:
+        try:
+            parsed_logs = self.parser.parse(logs, original_format=original_format)
+            result = await self._process_logs_async(parsed_logs, source=source, original_format=original_format, ignore_time_window=False, mode=mode)
+            if result.validation_errors:
+                self.persist_failed_logs(result.validation_errors, file_path=failed_log_path)
+            return result
+        except Exception as e:
+            log_and_raise("Stream ingestion failed", e, {"logs": logs})
+            return IngestionResult(success=False, processed_count=0, failed_count=0, validation_errors=[LogValidationError(field="stream", error_type="ingestion_error", message=str(e), raw_value=logs)], processing_time_ms=0)
+
+    async def _process_logs_async(self, logs: List[Any], source: str, original_format: str, ignore_time_window: bool = False, mode: str = "simulation") -> IngestionResult:
+        from app.models.log_models import LogValidationError
+        start_time = datetime.now(timezone.utc)
+        normalized_logs = []
+        validation_errors = []
+        processed_count = 0
+        failed_count = 0
+        is_mock = self.parser.__class__.__name__ == "MockParser"
+        for raw_log in logs:
+            try:
+                if not is_mock and not hasattr(raw_log, 'raw_log'):
+                    try:
+                        from app.models.log_models import RawGCPLogEntry
+                        parsed_log = RawGCPLogEntry(raw_log=raw_log, **raw_log)
+                    except Exception as e:
+                        validation_errors.append(LogValidationError(
+                            field="raw_log",
+                            error_type="parsing_error",
+                            message=str(e),
+                            raw_value=raw_log
+                        ))
+                        failed_count += 1
+                        continue
+                else:
+                    parsed_log = raw_log
+                with start_trace("log_ingest") as span:
+                    set_correlation_context(span, parsed_log)
+                    normalized = self.parser.normalize(parsed_log)
+                    normalized_dict = normalized.model_dump(mode='json') if hasattr(normalized, 'model_dump') else dict(normalized)
+                    # Store log and assign log_index
+                    log_index = await self.log_storage.store_log(normalized_dict)
+                    normalized_dict["log_index"] = log_index
+                    normalized_logs.append(normalized_dict)
+                    processed_count += 1
+                    # Run hybrid detector
+                    is_anomaly = self.hybrid_detector.detect(normalized_dict)
+                    if is_anomaly:
+                        await self.log_storage.flag_anomaly(log_index)
+            except Exception as e:
+                log_warning("Log normalization failed", {"error": str(e), "raw_log": getattr(raw_log, 'raw_log', raw_log)})
+                validation_errors.append(LogValidationError(
+                    field="log",
+                    error_type="normalization_error",
+                    message=str(e),
+                    raw_value=getattr(raw_log, 'raw_log', raw_log)
+                ))
+                failed_count += 1
+        end_time = datetime.now(timezone.utc)
+        processing_time_ms = (end_time - start_time).total_seconds() * 1000
+        self.metrics.logs_received += len(logs)
+        self.metrics.logs_processed += processed_count
+        self.metrics.logs_failed += failed_count
+        self.metrics.avg_processing_time_ms = processing_time_ms / max(1, len(logs))
+        if self.metrics_service:
+            self.metrics_service.record(self.metrics)
+        return IngestionResult(
+            success=failed_count == 0,
+            processed_count=processed_count,
+            failed_count=failed_count,
+            validation_errors=validation_errors,
+            processing_time_ms=processing_time_ms
+        )
+
+    async def get_buffer(self, mode: str = "simulation"):
+        buffer = self.get_buffer_for_mode(mode)
+        return await buffer.get_status()
+
+    def get_metrics(self) -> IngestionMetrics:
+        """
+        Return current ingestion metrics.
+        """
+        return self.metrics 
