@@ -22,7 +22,7 @@ A modern, LLM-powered log monitoring and root cause analysis (RCA) platform for 
 
 ### 1. Clone the Repository
 ```bash
-git clone <your-repo-url>
+git clone <https://github.com/dheeraj-gilada/GCP-log-monitor>
 cd GCP-log-monitoring
 ```
 
