@@ -34,10 +34,9 @@ router = APIRouter()
 
 # Dependency injection (replace with your DI framework or manual instantiation)
 buffer_config = BufferConfig()  # This will load from .env or environment
-adaptive_log_ingestion = AdaptiveLogIngestion(parser=AdaptiveLogParser(), buffer_config=buffer_config)
 
-def get_log_ingestion():
-    return adaptive_log_ingestion
+def get_log_ingestion(mode: str = "simulation"):
+    return AdaptiveLogIngestion(parser=AdaptiveLogParser(), buffer_config=buffer_config, mode=mode)
 
 metrics_service = MetricsService()
 def get_metrics_service():
@@ -89,16 +88,18 @@ def get_detector_for_log_type(log_type):
 async def ingest_logs_file(
     file: UploadFile = File(...),
     mode: str = Form("simulation"),
-    log_ingestion: AdaptiveLogIngestion = Depends(get_log_ingestion)
 ):
     logging.info(f"Received file upload for ingestion. Mode: {mode}")
     tmp_path = None
+    log_ingestion = get_log_ingestion(mode)
     try:
+        # Flush Redis DB for simulation mode before ingesting
+        if mode == "simulation":
+            await log_ingestion.log_storage.flush_db()
         # Save the uploaded file to a temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
-        # No buffer clearing needed; use Redis-based storage
         result = await log_ingestion.ingest_from_file(file_path=tmp_path, source="file_upload", original_format="auto", mode=mode)
         return IngestionResponse(result=result)
     except Exception as e:
@@ -106,7 +107,6 @@ async def ingest_logs_file(
         log_and_raise("File ingestion failed", e)
     finally:
         file.file.close()
-        # Optionally, remove the temp file after processing
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -151,19 +151,20 @@ async def ingest_logs_gcp(
 # --- REMOVED: /logs/buffer, /logs/buffer/full, /logs/buffer/normalized-sample, buffer clearing in ingestion, buffer usage in monitoring ---
 
 # Add Redis-based log/anomaly endpoints
-redis_log_storage = adaptive_log_ingestion.log_storage
-
+# Update endpoints to use the correct log storage per mode
 @router.get("/logs/redis/recent")
-async def get_recent_logs(count: int = 100):
+async def get_recent_logs(count: int = 100, mode: str = Query("simulation")):
     """Get the most recent logs from Redis."""
+    redis_log_storage = get_log_ingestion(mode).log_storage
     max_index = await redis_log_storage.get_current_max_index()
     start = max(1, max_index - count + 1)
     logs = await redis_log_storage.get_logs_range(start, max_index)
     return {"count": len(logs), "logs": logs}
 
 @router.get("/logs/redis/anomalies")
-async def get_recent_anomalies(count: int = 100):
+async def get_recent_anomalies(count: int = 100, mode: str = Query("simulation")):
     """Get the most recent anomalies from Redis."""
+    redis_log_storage = get_log_ingestion(mode).log_storage
     indices = await redis_log_storage.get_recent_anomalies(count)
     logs = await redis_log_storage.get_logs_range(min(indices, default=1), max(indices, default=0)) if indices else []
     # Filter only is_anomaly logs (defensive)
@@ -171,14 +172,16 @@ async def get_recent_anomalies(count: int = 100):
     return {"count": len(logs), "anomalies": logs}
 
 @router.get("/logs/redis/range")
-async def get_logs_by_index_range(start: int, end: int):
+async def get_logs_by_index_range(start: int, end: int, mode: str = Query("simulation")):
     """Get logs by log_index range from Redis."""
+    redis_log_storage = get_log_ingestion(mode).log_storage
     logs = await redis_log_storage.get_logs_range(start, end)
     return {"count": len(logs), "logs": logs}
 
 @router.get("/logs/redis/anomalies/range")
-async def get_anomalies_by_index_range(start: int, end: int):
+async def get_anomalies_by_index_range(start: int, end: int, mode: str = Query("simulation")):
     """Get anomalies by log_index range from Redis."""
+    redis_log_storage = get_log_ingestion(mode).log_storage
     indices = await redis_log_storage.get_anomaly_indices(start, end)
     logs = await redis_log_storage.get_logs_range(start, end)
     logs = [log for log in logs if log.get("log_index") in indices and log.get("is_anomaly")]

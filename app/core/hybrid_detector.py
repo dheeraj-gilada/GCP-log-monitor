@@ -13,7 +13,9 @@ class HybridDetector:
     def detect(self, log, features_vec=None):
         # Rule-based detection
         rule_matches = self.rule_engine.match(log)
+        print(f"[DEBUG][HybridDetector] rule_matches: {rule_matches}")
         rule_result = rule_matches[0] if rule_matches else None
+        print(f"[DEBUG][HybridDetector] rule_result: {rule_result}")
         # ML-based detection (DISABLED)
         # import logging
         # if features_vec is not None:
@@ -31,6 +33,8 @@ class HybridDetector:
         #     ml_result = {'score': ml_score, 'features': features} if ml_is_anomaly else None
         ml_result = None  # ML detection disabled
         # Correlation
-        return correlate(rule_result, ml_result)
+        detection = correlate(rule_result, ml_result)
+        print(f"[DEBUG][HybridDetector] correlate output: {detection}")
+        return detection
 
     # TODO: Add batch detection, feedback, and prioritization methods. 

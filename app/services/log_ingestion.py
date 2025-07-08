@@ -24,17 +24,19 @@ class AdaptiveLogIngestion:
     def __init__(
         self,
         parser: Callable,  # AdaptiveLogParser instance
+        buffer_config: Optional[BufferConfig] = None,
+        mode: str = "simulation",
         gcp_service: Optional[Any] = None,  # GCPService instance
         metrics_service: Optional[Any] = None,  # MetricsService instance
-        buffer_config: Optional[BufferConfig] = None,
         hybrid_detector: Optional[Any] = None  # Add hybrid_detector
     ):
         self.parser = parser
         self.gcp_service = gcp_service
         self.metrics_service = metrics_service
         self.metrics = IngestionMetrics()
-        # Use Redis URL from config or default
-        redis_url = getattr(buffer_config, 'redis_url', 'redis://localhost:6379') if buffer_config else 'redis://localhost:6379'
+        self.mode = mode
+        # Use BufferConfig to select the correct Redis URL for the mode
+        redis_url = buffer_config.get_redis_url(mode) if buffer_config else ("redis://localhost:6379/1" if mode=="simulation" else "redis://localhost:6379/0")
         self.log_storage = LogStorageManager(redis_url=redis_url, buffer_size=getattr(buffer_config, 'buffer_max_size', 1000) if buffer_config else 1000)
         if hybrid_detector is not None:
             self.hybrid_detector = hybrid_detector
@@ -154,9 +156,11 @@ class AdaptiveLogIngestion:
                     normalized_dict["log_index"] = log_index
                     normalized_logs.append(normalized_dict)
                     processed_count += 1
-                    # Run hybrid detector
-                    is_anomaly = self.hybrid_detector.detect(normalized_dict)
-                    if is_anomaly:
+                    # Always use the actual normalized log for detection
+                    log_for_detection = normalized_dict.get('normalized_log', normalized_dict)
+                    detection_result = self.hybrid_detector.detect(log_for_detection)
+                    print(f"[DEBUG] Log: {log_for_detection.get('message', '')}, Detection: {detection_result}")
+                    if detection_result and detection_result.get('is_anomaly'):
                         await self.log_storage.flag_anomaly(log_index)
             except Exception as e:
                 log_warning("Log normalization failed", {"error": str(e), "raw_log": getattr(raw_log, 'raw_log', raw_log)})

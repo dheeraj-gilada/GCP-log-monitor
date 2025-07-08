@@ -63,4 +63,8 @@ class LogStorageManager:
         return [int(idx) for idx in await self.redis.zrangebyscore("anomalies:sorted_set", start_index, end_index)]
 
     async def get_recent_anomalies(self, count: int = 10) -> List[int]:
-        return [int(idx) for idx in await self.redis.lrange("recent_anomalies:list", 0, count - 1)] 
+        return [int(idx) for idx in await self.redis.lrange("recent_anomalies:list", 0, count - 1)]
+
+    async def flush_db(self):
+        """Flush the entire Redis database (DANGEROUS: use only for simulation mode)."""
+        await self.redis.flushdb() 
