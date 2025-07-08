@@ -195,9 +195,14 @@ async def start_monitoring(request: Request):
 
     async def report_stream():
         group_count = 0
+        rca_results = []
         async for report in run_two_agent_workflow_stream(log_storage, lookback=lookback, api_key=api_key):
             group_count += 1
+            rca_results.append(report)
             yield f"data: {json.dumps(report, default=str)}\n\n"
+        # Update the global variable with the latest RCA results
+        global latest_monitoring_results
+        latest_monitoring_results["rca_results"] = rca_results
         yield f"data: {json.dumps({'done': True, 'total_alerts': group_count})}\n\n"
 
     return StreamingResponse(report_stream(), media_type="text/event-stream")
@@ -206,10 +211,12 @@ async def start_monitoring(request: Request):
 async def send_test_alert_email(request: Request):
     data = await request.json()
     email = data.get("email")
+    rca_results = data.get("rca_results")
     print(f"[ALERT-TEST] Received request to send test alert email to: {email}")
     global latest_monitoring_results
     anomalies = latest_monitoring_results.get("anomalies", [])
-    rca_results = latest_monitoring_results.get("rca_results", [])
+    if not rca_results:
+        rca_results = latest_monitoring_results.get("rca_results", [])
     if not anomalies:
         # fallback to dummy data
         anomalies = [{
@@ -217,6 +224,7 @@ async def send_test_alert_email(request: Request):
             "detection": {"reason": "Test anomaly detected by rule engine"},
             "rca": {"root_cause": "Test root cause", "impact": "Test impact", "remediation": "Test remediation"}
         }]
+    if not rca_results:
         rca_results = [{"root_cause": "Test root cause", "impact": "Test impact", "remediation": "Test remediation"}]
     try:
         send_alert_email(email, anomalies, rca_results)
