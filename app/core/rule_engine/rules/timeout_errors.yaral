@@ -1,0 +1,14 @@
+rule timeout_errors_normalized {
+  meta:
+    name = "timeout_errors_normalized"
+    author = "Custom"
+    description = "Detects timeout errors in normalized logs."
+    severity = "HIGH"
+
+  events:
+    $message contains "timeout"
+    $severity = "ERROR"
+
+  condition:
+    all of them
+} 

@@ -114,6 +114,8 @@ class NormalizedLogEntry(BaseModel):
     ingestion_metadata: Optional[IngestionMetadata] = None
     service_specific: Optional[Union[GKELogEntry, CloudSQLLogEntry, CloudFunctionLogEntry, AppEngineLogEntry, LoadBalancerLogEntry]] = None
     raw_log: Optional[Dict[str, Any]] = None
+    log_index: Optional[int] = None  # Not stored in Redis, populated on retrieval
+    is_anomaly: bool = False         # Stored in Redis, updated by detector
 
     class Config:
         allow_population_by_field_name = True

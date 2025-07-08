@@ -1,0 +1,15 @@
+rule authentication_failures_normalized {
+  meta:
+    name = "authentication_failures_normalized"
+    author = "Custom"
+    description = "Detects authentication failures in normalized logs."
+    severity = "MEDIUM"
+
+  events:
+    $severity = "ERROR"
+    $message contains "authentication failed"
+    $resource_type contains "identity"  // e.g., cloud-identity, user-login
+
+  condition:
+    all of them
+} 

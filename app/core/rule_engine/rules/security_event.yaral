@@ -1,0 +1,15 @@
+rule security_event {
+  meta:
+    name = "security_event"
+    author = "AI Assistant"
+    description = "Detects security-related events such as suspicious login or leaked credentials."
+    severity = "CRITICAL"
+
+  events:
+    $severity in ("ERROR", "CRITICAL", "ALERT", "EMERGENCY")
+    $message matches /suspicious login|leaked credential|unauthorized access|security incident|bad domain|bad ip|coin mining|intrusion/i
+    $resource_type contains "security"  // e.g., security-command-center
+
+  condition:
+    all of them
+} 

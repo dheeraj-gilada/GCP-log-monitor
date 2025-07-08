@@ -1,0 +1,16 @@
+rule resource_saturation_normalized {
+  meta:
+    name = "resource_saturation_normalized"
+    author = "Custom"
+    description = "Detects CPU or memory saturation in normalized logs."
+    severity = "CRITICAL"
+
+  events:
+    $message contains "CPU"
+    $message contains "saturation"
+    $severity = "WARNING"
+    $resource_type contains "compute"  // e.g., gce_instance
+
+  condition:
+    all of them
+} 

@@ -1,0 +1,38 @@
+<div class="log-viewer">
+    <div class="log-viewer-header">
+        <h3 class="component-title">Live Log Stream</h3>
+        <div class="log-controls">
+            <div class="filter-controls">
+                <select id="log-severity-filter" aria-label="Filter logs by severity">
+                    <option value="all">All Severities</option>
+                    <option value="debug">Debug</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                    <option value="critical">Critical</option>
+                </select>
+                <input type="text" id="log-search" placeholder="Search logs..." aria-label="Search logs">
+            </div>
+            <div class="refresh-controls">
+                <label class="auto-refresh-toggle">
+                    <input type="checkbox" id="auto-refresh" checked>
+                    <span>Auto-refresh</span>
+                </label>
+                <button id="refresh-btn" class="refresh-btn" title="Refresh logs">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 4v6h-6"></path>
+                        <path d="M1 20v-6h6"></path>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+                        <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+    <div id="log-stream" class="log-stream-container">
+        <div class="loading-placeholder">Loading logs...</div>
+    </div>
+    <div class="log-viewer-footer">
+        <span>Last updated: <span id="last-refreshed">Never</span></span>
+    </div>
+</div>

@@ -1,0 +1,15 @@
+rule timeout_error_detected {
+  meta:
+    name = "timeout_error_detected"
+    author = "Custom"
+    description = "Detects timeout errors in normalized logs."
+    severity = "HIGH"
+
+  events:
+    $severity = "ERROR"
+    $message contains "timeout"
+    $resource_type = "gce_instance"
+
+  condition:
+    all of them
+} 

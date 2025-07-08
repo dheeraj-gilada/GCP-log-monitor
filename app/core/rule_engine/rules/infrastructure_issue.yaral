@@ -1,0 +1,15 @@
+rule infrastructure_issue {
+  meta:
+    name = "infrastructure_issue"
+    author = "AI Assistant"
+    description = "Detects infrastructure issues such as disk full, network errors, or hardware failures."
+    severity = "HIGH"
+
+  events:
+    $severity in ("ERROR", "CRITICAL", "ALERT", "EMERGENCY")
+    $message matches /disk full|out of memory|hardware failure|network error|unreachable|connection refused|timeout/i
+    $resource_type contains "compute"  // e.g., gce_instance, cloud_sql
+
+  condition:
+    all of them
+} 

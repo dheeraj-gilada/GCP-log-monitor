@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import OrderedDict
 import contextvars
 from app.models.workflow_models import (
@@ -9,6 +9,15 @@ from app.models.workflow_models import (
 )
 from app.utils.otel_utils import start_trace
 from app.utils.error_utils import log_and_raise, log_warning
+from app.core.hybrid_detector import HybridDetector
+
+def run_detection(log, rule_engine, ml_detector, feature_extractor):
+    """
+    Normalize log, run hybrid detection (rule + ML + correlation), return result.
+    """
+    detector = HybridDetector(rule_engine, ml_detector, feature_extractor)
+    return detector.detect(log)
+# TODO: Add batch/stream orchestration, error handling, and hooks.
 
 # Context variable for per-run context isolation
 current_workflow_context: contextvars.ContextVar[Optional[WorkflowContext]] = contextvars.ContextVar("current_workflow_context", default=None)
@@ -32,7 +41,7 @@ class IngestionWorkflow:
         context = WorkflowContext(
             run_id=run_id,
             source=source,
-            start_time=datetime.utcnow(),
+            start_time=datetime.now(timezone.utc),
             status="pending",
             progress=progress,
             trace_id=trace_id,
@@ -98,7 +107,7 @@ class IngestionWorkflow:
                 await self._maybe_call_hook(context.hooks.on_error, context, e)
             log_warning("Workflow run failed", {"run_id": context.run_id, "error": str(e)})
         finally:
-            context.end_time = datetime.utcnow()
+            context.end_time = datetime.now(timezone.utc)
             async with self.lock:
                 self.active_runs.pop(context.run_id, None)
                 self.completed_runs.append(context)

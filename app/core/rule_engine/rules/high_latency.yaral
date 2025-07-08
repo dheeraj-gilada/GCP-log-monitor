@@ -1,0 +1,14 @@
+rule high_latency {
+  meta:
+    name = "high_latency"
+    author = "AI Assistant"
+    description = "Detects high latency events using structured fields (latency_ms or duration_ms) across all resource types."
+    severity = "HIGH"
+
+  events:
+    ($latency_ms >= 1000) or ($duration_ms >= 1000)
+    $severity in ("WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY")
+
+  condition:
+    all of them
+} 

@@ -1,0 +1,58 @@
+/* Button Styles */
+.submit-btn {
+    width: 100%;
+    padding: 14px 0;
+    background: #10b981;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+    box-shadow: 0 2px 8px 0 rgba(16,185,129,0.08);
+}
+.submit-btn:hover {
+    background: #059669;
+}
+.submit-btn:active {
+    background: #047857;
+}
+.submit-btn.loading {
+    background: #9ca3af;
+    cursor: not-allowed;
+}
+.submit-btn.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid transparent;
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+.magicui-shiny-btn {
+    background: #10b981;
+    color: #fff;
+    border-radius: 8px;
+    font-weight: 600;
+    box-shadow: none;
+    transition: background 0.2s;
+}
+.magicui-shiny-btn:hover {
+    background: #059669;
+}
+.magicui-shiny-text {
+    background: none;
+    color: #fff;
+    font-weight: 600;
+    font-size: 1.05rem;
+} 

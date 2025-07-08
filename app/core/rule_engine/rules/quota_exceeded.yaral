@@ -1,0 +1,14 @@
+rule quota_exceeded {
+  meta:
+    name = "quota_exceeded"
+    author = "AI Assistant"
+    description = "Detects quota or resource limit exceeded events in GCP logs."
+    severity = "HIGH"
+
+  events:
+    $severity in ("ERROR", "CRITICAL", "ALERT", "EMERGENCY")
+    $message matches /quota( |_)exceeded|resource( |_)limit( |_)exceeded|rate limit/i
+
+  condition:
+    all of them
+} 

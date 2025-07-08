@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from app.models.metrics_models import IngestionMetrics, ExporterMetrics, SystemResourceMetrics, MetricsSnapshot
 from app.models.log_models import LogBufferStatus
@@ -58,7 +58,7 @@ class MetricsService:
                 exporter_metrics=self.exporter_metrics.copy(),
                 system_metrics=self.system_metrics,
                 custom_metrics=self.custom_metrics.copy(),
-                snapshot_time=datetime.utcnow()
+                snapshot_time=datetime.now(timezone.utc)
             )
 
     # Optional: Integrate with OpenTelemetry metrics here (stub for now)

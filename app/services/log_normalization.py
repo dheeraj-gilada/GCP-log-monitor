@@ -1,10 +1,26 @@
 from typing import Any, Dict, List, Union, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from app.models.log_models import RawGCPLogEntry, NormalizedLogEntry, LogValidationError, LogBufferStatus
 from app.utils.error_utils import log_warning, log_and_raise
 from app.utils.otel_utils import extract_correlation_context
+
+def parse_timestamp_aware(ts):
+    if not ts:
+        return datetime.now(timezone.utc)
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts
+    if isinstance(ts, str):
+        if ts.endswith('Z'):
+            return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    return datetime.now(timezone.utc)
 
 class AdaptiveLogParser:
     """
@@ -44,69 +60,58 @@ class AdaptiveLogParser:
             log_and_raise("Failed to parse raw logs", e)
         return logs
 
-    def normalize(self, raw_log: RawGCPLogEntry) -> NormalizedLogEntry:
-        """
-        Converts a RawGCPLogEntry to a NormalizedLogEntry using robust heuristics.
-        Handles all GCP log structure variations.
-        """
-        # --- Timestamp extraction ---
-        timestamp = (
-            raw_log.timestamp or
-            self._extract_nested(raw_log.json_payload, ["timestamp"]) or
-            self._extract_nested(raw_log.json_payload, ["time"]) or
-            raw_log.receive_timestamp or
-            datetime.utcnow()
-        )
-        if isinstance(timestamp, str):
-            try:
-                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            except Exception:
-                timestamp = datetime.utcnow()
+    def normalize(self, raw_log):
+        # Support both dict and object input
+        def get_field(obj, field, default=None):
+            if isinstance(obj, dict):
+                return obj.get(field, default)
+            return getattr(obj, field, default)
 
-        # --- Severity extraction ---
-        severity = (
-            raw_log.severity or
-            self._extract_nested(raw_log.json_payload, ["severity"]) or
-            self._extract_nested(raw_log.json_payload, ["level"]) or
-            self._extract_nested(raw_log.json_payload, ["priority"]) or
-            None
-        )
-        if isinstance(severity, int):
-            severity = self._map_numeric_severity(severity)
-        elif isinstance(severity, str):
-            severity = severity.upper()
+        # Ensure raw_log is a dict for NormalizedLogEntry
+        raw_log_dict = raw_log.model_dump() if hasattr(raw_log, 'model_dump') else raw_log
 
-        # --- Message extraction ---
-        message = (
-            raw_log.text_payload or
-            self._extract_nested(raw_log.json_payload, ["message"]) or
-            self._extract_nested(raw_log.json_payload, ["msg"]) or
-            self._extract_nested(raw_log.json_payload, ["log"]) or
-            self._extract_nested(raw_log.json_payload, ["event"]) or
-            self._extract_nested(raw_log.proto_payload, ["methodName"]) or
-            str(raw_log.raw_log)
-        )
+        # Helper: get field from top level, else from raw_log
+        def get_field_with_fallback(obj, field, default=None):
+            val = get_field(obj, field, None)
+            if val is not None:
+                return val
+            # Fallback: look inside 'raw_log' if present
+            raw = get_field(obj, 'raw_log', {})
+            if raw and isinstance(raw, dict):
+                return get_field(raw, field, default)
+            return default
 
-        # --- Resource extraction ---
-        resource_type = None
-        resource_labels = None
-        if raw_log.resource:
-            resource_type = raw_log.resource.get("type")
-            resource_labels = raw_log.resource.get("labels")
+        try:
+            timestamp = get_field_with_fallback(raw_log, 'timestamp')
+            timestamp = parse_timestamp_aware(timestamp)
+            severity = get_field_with_fallback(raw_log, 'severity')
+            resource = get_field_with_fallback(raw_log, 'resource', {})
+            resource_type = None
+            resource_labels = {}
+            if resource:
+                resource_type = get_field(resource, 'type') or get_field_with_fallback(raw_log, 'resource_type')
+                resource_labels = get_field(resource, 'labels', {}) or get_field_with_fallback(raw_log, 'resource_labels', {})
+            else:
+                resource_type = get_field_with_fallback(raw_log, 'resource_type')
+                resource_labels = get_field_with_fallback(raw_log, 'resource_labels', {})
+            json_payload = get_field_with_fallback(raw_log, 'jsonPayload', {})
+            message = get_field(json_payload, 'message') if json_payload else get_field_with_fallback(raw_log, 'message')
+            if not message:
+                message = str(raw_log)
 
-        # --- Correlation context (trace/span) ---
-        correlation_context = extract_correlation_context(raw_log)
-
-        # --- Build NormalizedLogEntry ---
-        return NormalizedLogEntry(
-            timestamp=timestamp,
-            message=message,
-            severity=severity,
-            resource_type=resource_type,
-            resource_labels=resource_labels,
-            correlation_context=correlation_context,
-            raw_log=raw_log.raw_log
-        )
+            from app.models.log_models import NormalizedLogEntry
+            normalized_log = NormalizedLogEntry(
+                timestamp=timestamp,
+                severity=severity,
+                resource_type=resource_type,
+                message=message,
+                raw_log=raw_log_dict
+            )
+            logging.info(f"Successfully normalized log: {normalized_log}")
+            return normalized_log
+        except Exception as e:
+            logging.error(f"Log normalization failed | Error: {e} | Raw log: {raw_log}")
+            return None
 
     def _extract_nested(self, obj: Optional[Dict[str, Any]], keys: List[str]) -> Optional[Any]:
         if not obj:

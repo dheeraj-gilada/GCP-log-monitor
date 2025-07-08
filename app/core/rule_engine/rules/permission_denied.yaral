@@ -1,0 +1,14 @@
+rule permission_denied {
+  meta:
+    name = "permission_denied"
+    author = "AI Assistant"
+    description = "Detects permission or authorization denied errors across GCP logs."
+    severity = "HIGH"
+
+  events:
+    $severity in ("ERROR", "CRITICAL", "ALERT", "EMERGENCY")
+    $message matches /permission( |_)denied|not authorized|access denied|unauthorized/i
+
+  condition:
+    all of them
+} 

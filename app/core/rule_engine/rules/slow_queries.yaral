@@ -1,0 +1,15 @@
+rule slow_queries_normalized {
+  meta:
+    name = "slow_queries_normalized"
+    author = "Custom"
+    description = "Detects slow queries or latency spikes in normalized logs."
+    severity = "MEDIUM"
+
+  events:
+    $message contains "slow query"
+    $severity = "WARNING"
+    $resource_type contains "sql"  // e.g., cloud-sql, bigquery
+
+  condition:
+    all of them
+} 
