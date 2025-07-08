@@ -148,162 +148,112 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
-  // --- REFACTORED GCP Credentials Upload Logic ---
-  const gcpUploadArea = document.getElementById("gcp-credentials-upload-area");
-  const gcpFileInput = document.getElementById("gcp-credentials");
-  const gcpFilenameSpan = document.getElementById("gcp-credentials-filename");
-  const projectIdSelect = document.getElementById("project-id");
-  const resourceTypeSelect = document.getElementById("resource-type");
-  const severitySelect = document.getElementById("severity");
-  let gcpCredentialsFile = null;
+  // --- Live Mode Logic Rebuild ---
+  function setupLiveMode() {
+    const gcpUploadArea = document.getElementById(
+      "gcp-credentials-upload-area",
+    );
+    const gcpFileInput = document.getElementById("gcp-credentials");
+    const gcpFilenameSpan = document.getElementById("gcp-credentials-filename");
+    const projectIdSelect = document.getElementById("project-id");
+    const statusMsg = document.getElementById("gcp-live-status");
+    let gcpCredentialsFile = null;
 
-  if (gcpUploadArea && gcpFileInput) {
-    gcpUploadArea.addEventListener("click", function (e) {
-      if (e.target !== gcpFileInput) {
-        gcpFileInput.click();
-      }
-    });
-    gcpFileInput.addEventListener("change", async function () {
-      if (gcpFileInput.files.length > 0) {
-        gcpCredentialsFile = gcpFileInput.files[0];
-        gcpFilenameSpan.textContent =
-          "File selected: " + gcpCredentialsFile.name;
-        gcpFilenameSpan.style.color = "#10b981";
-        // Validate credentials
-        const formData = new FormData();
-        formData.append("service_account_file", gcpCredentialsFile);
-        const gcpUploadStatus = document.getElementById("gcp-upload-status");
-        if (gcpUploadStatus) {
-          gcpUploadStatus.textContent = "Validating credentials...";
-          gcpUploadStatus.style.color = "#374151";
+    if (gcpUploadArea && gcpFileInput) {
+      gcpUploadArea.addEventListener("click", function (e) {
+        if (e.target !== gcpFileInput) {
+          gcpFileInput.value = ""; // Reset so same file can be re-selected
+          gcpFileInput.click();
         }
-        try {
-          const resp = await fetch("/api/gcp/validate-credentials", {
-            method: "POST",
-            body: formData,
-          });
-          const data = await resp.json();
-          if (!resp.ok || !data.success)
-            throw new Error(data.message || "Invalid credentials");
-          if (gcpUploadStatus) {
-            gcpUploadStatus.textContent =
-              "Credentials valid. Fetching projects...";
-            gcpUploadStatus.style.color = "#10b981";
+      });
+      gcpFileInput.addEventListener("change", async function () {
+        if (gcpFileInput.files.length > 0) {
+          gcpCredentialsFile = gcpFileInput.files[0];
+          gcpFilenameSpan.textContent =
+            "File selected: " + gcpCredentialsFile.name;
+          gcpFilenameSpan.style.color = "#10b981";
+          statusMsg.textContent = "Validating credentials...";
+          statusMsg.style.color = "#374151";
+          // Validate credentials
+          const formData = new FormData();
+          formData.append("service_account_file", gcpCredentialsFile);
+          try {
+            const resp = await fetch("/api/gcp/validate-credentials", {
+              method: "POST",
+              body: formData,
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+              statusMsg.textContent =
+                "Validation failed: " + (data.message || "Invalid credentials");
+              statusMsg.style.color = "#dc2626";
+              projectIdSelect.innerHTML =
+                '<option value="" disabled selected>Select a project</option>';
+              projectIdSelect.disabled = true;
+              return;
+            }
+            statusMsg.textContent =
+              "Validation successful. Fetching projects...";
+            statusMsg.style.color = "#10b981";
+            // Fetch projects
+            const projectsForm = new FormData();
+            projectsForm.append("service_account_file", gcpCredentialsFile);
+            try {
+              const projectsResp = await fetch("/api/gcp/projects", {
+                method: "POST",
+                body: projectsForm,
+              });
+              const projectsData = await projectsResp.json();
+              if (!projectsResp.ok || !projectsData.success) {
+                statusMsg.textContent =
+                  "Failed to fetch projects: " +
+                  (projectsData.message || "Unknown error");
+                statusMsg.style.color = "#dc2626";
+                projectIdSelect.innerHTML =
+                  '<option value="" disabled selected>Select a project</option>';
+                projectIdSelect.disabled = true;
+                return;
+              }
+              // Populate project ID dropdown
+              projectIdSelect.innerHTML =
+                '<option value="" disabled selected>Select a project</option>';
+              projectsData.projects.forEach((proj) => {
+                const opt = document.createElement("option");
+                opt.value = proj.projectId;
+                opt.textContent = `${proj.name} (${proj.projectId})`;
+                projectIdSelect.appendChild(opt);
+              });
+              projectIdSelect.disabled = false;
+              statusMsg.textContent = "Projects loaded. Select a project.";
+              statusMsg.style.color = "#10b981";
+            } catch (err) {
+              statusMsg.textContent =
+                "Failed to fetch projects: " + (err.message || err);
+              statusMsg.style.color = "#dc2626";
+              projectIdSelect.innerHTML =
+                '<option value="" disabled selected>Select a project</option>';
+              projectIdSelect.disabled = true;
+            }
+          } catch (err) {
+            statusMsg.textContent =
+              "Validation failed: " + (err.message || err);
+            statusMsg.style.color = "#dc2626";
+            projectIdSelect.innerHTML =
+              '<option value="" disabled selected>Select a project</option>';
+            projectIdSelect.disabled = true;
           }
-          // Fetch projects
-          const projectsForm = new FormData();
-          projectsForm.append("service_account_file", gcpCredentialsFile);
-          const projectsResp = await fetch("/api/gcp/projects", {
-            method: "POST",
-            body: projectsForm,
-          });
-          const projectsData = await projectsResp.json();
-          if (!projectsResp.ok || !projectsData.success)
-            throw new Error(projectsData.message || "Failed to list projects");
-          // Populate project ID dropdown
-          projectIdSelect.innerHTML =
-            '<option value="" disabled selected>Select a project</option>';
-          projectsData.projects.forEach((proj) => {
-            const opt = document.createElement("option");
-            opt.value = proj.projectId;
-            opt.textContent = `${proj.name} (${proj.projectId})`;
-            projectIdSelect.appendChild(opt);
-          });
-          projectIdSelect.disabled = false;
-        } catch (err) {
-          if (gcpUploadStatus) {
-            gcpUploadStatus.textContent = "Error: " + (err.message || err);
-            gcpUploadStatus.style.color = "#dc2626";
-          }
-          projectIdSelect.innerHTML =
-            '<option value="" disabled selected>Select a project</option>';
-          projectIdSelect.disabled = true;
-          resourceTypeSelect.innerHTML =
-            '<option value="" disabled selected>Select resource type</option>';
-          resourceTypeSelect.disabled = true;
-          severitySelect.innerHTML =
-            '<option value="" disabled selected>Select severity</option>';
-          severitySelect.disabled = true;
+        } else {
+          gcpCredentialsFile = null;
+          gcpFilenameSpan.textContent = "No file selected.";
+          gcpFilenameSpan.style.color = "#dc2626";
+          statusMsg.textContent = "";
         }
-      } else {
-        gcpCredentialsFile = null;
-        gcpFilenameSpan.textContent = "No file selected.";
-        gcpFilenameSpan.style.color = "#dc2626";
-      }
-    });
+      });
+    }
   }
 
-  // --- GCP Credentials Validation and Dynamic Dropdowns ---
-  // The projectIdSelect, resourceTypeSelect, severitySelect, and gcpCredentialsFile
-  // are now managed by the single gcpFileInput.addEventListener('change') handler.
-  // This block is no longer needed for these specific elements.
-
-  if (projectIdSelect) {
-    projectIdSelect.addEventListener("change", async function () {
-      if (!gcpCredentialsFile || !projectIdSelect.value) return;
-      // Fetch log metadata
-      const formData = new FormData();
-      formData.append("service_account_file", gcpCredentialsFile);
-      formData.append("project_id", projectIdSelect.value);
-      const gcpUploadStatus = document.getElementById("gcp-upload-status");
-      if (gcpUploadStatus) {
-        gcpUploadStatus.textContent = "Fetching log metadata...";
-        gcpUploadStatus.style.color = "#374151";
-      }
-      try {
-        const resp = await fetch("/api/gcp/log-metadata", {
-          method: "POST",
-          body: formData,
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) {
-          gcpUploadStatus.textContent =
-            data.message || "Failed to get log metadata";
-          gcpUploadStatus.style.color = "#dc2626";
-          resourceTypeSelect.innerHTML =
-            '<option value="" disabled selected>Select resource type</option>';
-          resourceTypeSelect.disabled = true;
-          severitySelect.innerHTML =
-            '<option value="" disabled selected>Select severity</option>';
-          severitySelect.disabled = true;
-          return;
-        }
-        // Populate resource type dropdown
-        resourceTypeSelect.innerHTML =
-          '<option value="" disabled selected>Select resource type</option>';
-        data.resource_types.forEach((rt) => {
-          const opt = document.createElement("option");
-          opt.value = rt;
-          opt.textContent = rt;
-          resourceTypeSelect.appendChild(opt);
-        });
-        resourceTypeSelect.disabled = false;
-        // Populate severity dropdown
-        severitySelect.innerHTML =
-          '<option value="" disabled selected>Select severity</option>';
-        data.severities.forEach((sev) => {
-          const opt = document.createElement("option");
-          opt.value = sev;
-          opt.textContent = sev;
-          severitySelect.appendChild(opt);
-        });
-        severitySelect.disabled = false;
-        if (gcpUploadStatus) {
-          gcpUploadStatus.textContent = "Log metadata loaded.";
-          gcpUploadStatus.style.color = "#10b981";
-        }
-      } catch (err) {
-        gcpUploadStatus.textContent = "Error: " + (err.message || err);
-        gcpUploadStatus.style.color = "#dc2626";
-        resourceTypeSelect.innerHTML =
-          '<option value="" disabled selected>Select resource type</option>';
-        resourceTypeSelect.disabled = true;
-        severitySelect.innerHTML =
-          '<option value="" disabled selected>Select severity</option>';
-        severitySelect.disabled = true;
-      }
-    });
-  }
+  // Call setupLiveMode after DOMContentLoaded
+  setupLiveMode();
 
   // Wire up the shiny button for simulation and live mode
   const setupSubmitBtn = document.getElementById("setup-submit");
@@ -397,22 +347,54 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  // Implement runMonitoringPipeline to POST to /api/monitor/start and update monitoringStatus
+  // Mode switch: show/hide correct RCA output area
+  const modeToggle = document.getElementById("mode-toggle-checkbox");
+  const simStatusDiv = document.getElementById("monitoring-status-message-simulation");
+  const liveStatusDiv = document.getElementById("monitoring-status-message-live");
+  // Add debug borders to status divs for visibility
+  simStatusDiv.style.border = "2px dashed red";
+  liveStatusDiv.style.border = "2px dashed blue";
+  
+  function updateOutputVisibility() {
+    if (modeToggle && modeToggle.checked) {
+      // Simulation mode
+      simStatusDiv.style.display = "";
+      liveStatusDiv.style.display = "none";
+      liveStatusDiv.innerHTML = "";
+    } else {
+      simStatusDiv.style.display = "none";
+      liveStatusDiv.style.display = "";
+      simStatusDiv.innerHTML = "";
+    }
+  }
+  if (modeToggle) {
+    modeToggle.addEventListener("change", updateOutputVisibility);
+    updateOutputVisibility();
+  }
+
+  // Implement runMonitoringPipeline to GET from the correct endpoint and update the correct status div
   async function runMonitoringPipeline(mode) {
     const monitoringStatus = document.getElementById(
-      "monitoring-status-message",
+      mode === "simulation"
+        ? "monitoring-status-message-simulation"
+        : "monitoring-status-message-live"
     );
+    monitoringStatus.classList.add("show");
     monitoringStatus.innerHTML =
       '<strong>Running RCA analysis...</strong><br><div id="rca-reports"></div>';
     monitoringStatus.style.color = "#374151";
-    const rcaReportsDiv = document.getElementById("rca-reports");
+    const rcaReportsDiv = monitoringStatus.querySelector("#rca-reports");
     let reportCount = 0;
     let done = false;
     // Collect parameters for GET
     const alertEmail = localStorage.getItem("alertEmail") || "";
     const lookback = 1000; // You can make this dynamic if needed
     const apiKey = "";
-    const url = `/api/monitor/start?email=${encodeURIComponent(alertEmail)}&lookback=${lookback}&api_key=${encodeURIComponent(apiKey)}`;
+    // Use separate endpoints for simulation and live
+    const endpoint = mode === "simulation"
+      ? "/api/monitor/start-simulation"
+      : "/api/monitor/start-live";
+    const url = `${endpoint}?email=${encodeURIComponent(alertEmail)}&lookback=${lookback}&api_key=${encodeURIComponent(apiKey)}`;
     return new Promise((resolve, reject) => {
       const evtSource = new EventSource(url);
       evtSource.onmessage = function (event) {
@@ -420,13 +402,20 @@ document.addEventListener("DOMContentLoaded", function () {
           const data = JSON.parse(event.data);
           if (data.done) {
             done = true;
-            monitoringStatus.innerHTML += `<br><strong>RCA complete! Total reports: ${data.total_alerts}</strong>`;
+            if (reportCount === 0) {
+              monitoringStatus.classList.add("show");
+              monitoringStatus.innerHTML += "<br><strong>No anomalies detected.</strong>";
+            } else {
+              monitoringStatus.classList.add("show");
+              monitoringStatus.innerHTML += `<br><strong>RCA complete! Total reports: ${data.total_alerts}</strong>`;
+            }
             evtSource.close();
             resolve();
             return;
           }
           reportCount++;
           const report = data;
+          console.log("Received RCA report:", report); // Debug log
           const reportDiv = document.createElement("div");
           reportDiv.style.marginBottom = "1em";
           reportDiv.style.padding = "0.5em";
@@ -440,12 +429,15 @@ document.addEventListener("DOMContentLoaded", function () {
             `<b>Impact:</b> ${report.impact_assessment}<br>` +
             `<b>Suggested Actions:</b> ${(report.suggested_actions || []).join(", ")}<br>`;
           rcaReportsDiv.appendChild(reportDiv);
+          console.log("Appended reportDiv to rcaReportsDiv. Current HTML:", rcaReportsDiv.innerHTML);
         } catch (err) {
+          monitoringStatus.classList.add("show");
           monitoringStatus.innerHTML += "<br>Error parsing RCA report.";
         }
       };
       evtSource.onerror = function (err) {
         if (!done) {
+          monitoringStatus.classList.add("show");
           monitoringStatus.innerHTML += "<br>Error receiving RCA reports.";
           evtSource.close();
           reject(err);
@@ -494,7 +486,13 @@ document.addEventListener("DOMContentLoaded", function () {
       statusMsg.textContent = "";
       statusMsg.style.color = "#374151";
       try {
-        const response = await fetch("/api/alerts/send-test", {
+        // Use separate endpoints for simulation and live
+        const modeToggle = document.getElementById("mode-toggle-checkbox");
+        const isSimulationMode = modeToggle && modeToggle.checked;
+        const endpoint = isSimulationMode
+          ? "/api/alerts/send-test-simulation"
+          : "/api/alerts/send-test-live";
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email }),
@@ -504,8 +502,7 @@ document.addEventListener("DOMContentLoaded", function () {
           statusMsg.textContent = result.message;
           statusMsg.style.color = "#10b981";
         } else {
-          statusMsg.textContent =
-            result.message || "Failed to send test alert email.";
+          statusMsg.textContent = result.message || "Failed to send test alert email.";
           statusMsg.style.color = "#dc2626";
         }
       } catch (err) {
@@ -513,8 +510,7 @@ document.addEventListener("DOMContentLoaded", function () {
         statusMsg.style.color = "#dc2626";
       } finally {
         sendTestAlertBtn.disabled = false;
-        sendTestAlertBtn.querySelector("span").textContent =
-          "Send Test Alert Email";
+        sendTestAlertBtn.querySelector("span").textContent = "Send Test Alert Email";
       }
     });
   }
