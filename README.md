@@ -4,6 +4,12 @@ A modern, LLM-powered log monitoring and root cause analysis (RCA) platform for 
 
 ---
 
+## Demo Video
+
+[Watch the project demonstration on Loom](https://www.loom.com/share/847b9927a0034238a28e39ef6020c647?sid=c592b0fc-5149-4e24-bd20-e475b6ec499f)
+
+---
+
 ## Architecture Overview
 
 - **Backend:** FastAPI, Redis (separate DBs for simulation/live), optional TimescaleDB, OpenAI LLM for RCA
@@ -55,6 +61,8 @@ docker-compose up
 
 ### 7. SMTP/Email
 - Set `SMTP_USER`, `SMTP_PASS`, and `SMTP_SENDER` in your `.env` to enable alert emails.
+- [How to get your SMTP credentials (Gmail example, with App Passwords and security tips)](https://dev.to/msnmongare/how-to-configure-gmail-smtp-server-settings-7l6)
+- **Important:** Set your SMTP port to `587` for best compatibility.
 
 ---
 
