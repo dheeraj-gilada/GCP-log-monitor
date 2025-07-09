@@ -22,6 +22,8 @@ class BufferConfig(BaseSettings):
     # Redis
     enable_redis: bool = Field(True, env="ENABLE_REDIS")
     redis_url: Optional[str] = Field(None, env="REDIS_URL")
+    redis_url_simulation: Optional[str] = Field(None, env="REDIS_URL_SIMULATION")
+    redis_url_live: Optional[str] = Field(None, env="REDIS_URL_LIVE")
     redis_stream_name: str = Field("log_stream", env="REDIS_STREAM_NAME")
     redis_sorted_set_name: str = Field("log_sorted_set", env="REDIS_SORTED_SET_NAME")
     redis_pubsub_channel: str = Field("log_channel", env="REDIS_PUBSUB_CHANNEL")
@@ -46,3 +48,8 @@ class BufferConfig(BaseSettings):
     @property
     def timescaledb_table_name(self):
         return self.timescale_table 
+
+    def get_redis_url(self, mode: str = "simulation") -> str:
+        if mode == "live":
+            return self.redis_url_live or self.redis_url or "redis://localhost:6379/0"
+        return self.redis_url_simulation or self.redis_url or "redis://localhost:6379/1" 

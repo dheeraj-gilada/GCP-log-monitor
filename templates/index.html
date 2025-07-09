@@ -88,12 +88,11 @@
                 <div class="form-group">
                     <label for="gcp-credentials">Service Account JSON</label>
                     <div class="file-upload" id="gcp-credentials-upload-area">
-                        <input type="file" id="gcp-credentials" accept=".json" style="display:none;"> <!-- reverted to hidden after debug -->
+                        <input type="file" id="gcp-credentials" accept=".json" style="display:none;">
                         <div class="file-upload-text" id="gcp-credentials-upload-text">
                             <strong>Click to upload</strong> or drag and drop your GCP service account JSON file
                         </div>
                         <span id="gcp-credentials-filename" style="display:block;margin-top:0.5rem;color:#374151;font-size:0.97rem;"></span>
-                        <!-- Remove static status and spinner, JS will handle -->
                     </div>
                 </div>
                 <div class="form-group">
@@ -102,18 +101,7 @@
                         <option value="" disabled selected>Select a project</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label for="resource-type">Resource Type</label>
-                    <select id="resource-type">
-                        <option value="" disabled selected>Select resource type</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="severity">Severity</label>
-                    <select id="severity">
-                        <option value="" disabled selected>Select severity</option>
-                    </select>
-                </div>
+                <div id="gcp-live-status" class="status-message"></div>
             </div>
             <!-- Log Simulation (Simulation Mode) -->
             <div id="simulation-upload-section" class="form-section hidden">
@@ -128,6 +116,9 @@
                     </div>
                 </div>
             </div>
+            <!-- RCA Output Areas -->
+            <div id="monitoring-status-message-simulation" class="status-message"></div>
+            <div id="monitoring-status-message-live" class="status-message" style="display:none"></div>
             <!-- Alert Configuration -->
             <div class="form-section">
                 <h2>Alert Configuration</h2>

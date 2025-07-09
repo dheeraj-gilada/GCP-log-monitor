@@ -30,7 +30,7 @@ async def monitoring_dashboard(request: Request):
 @app.get("/health")
 def health():
     # Simple health check for Redis log storage
-    log_storage = ingestion_routes.adaptive_log_ingestion.log_storage
+    log_storage = ingestion_routes.get_log_ingestion("simulation").log_storage
     try:
         # Try to get current max index as a Redis health check
         import asyncio

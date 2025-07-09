@@ -11,7 +11,6 @@ SMTP_USER = os.getenv('SMTP_USER')
 SMTP_PASS = os.getenv('SMTP_PASS')
 SMTP_SENDER = os.getenv('SMTP_SENDER', SMTP_USER)
 
-
 def send_alert_email(recipient, anomalies, rca_results):
     print(f"[EMAIL] Attempting to send alert email to {recipient} with {len(rca_results)} RCA groups.")
     subject = "[GCP Log Monitor] Incident Analysis & RCA Report"
