@@ -351,9 +351,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const modeToggle = document.getElementById("mode-toggle-checkbox");
   const simStatusDiv = document.getElementById("monitoring-status-message-simulation");
   const liveStatusDiv = document.getElementById("monitoring-status-message-live");
-  // Add debug borders to status divs for visibility
-  simStatusDiv.style.border = "2px dashed red";
-  liveStatusDiv.style.border = "2px dashed blue";
   
   function updateOutputVisibility() {
     if (modeToggle && modeToggle.checked) {
