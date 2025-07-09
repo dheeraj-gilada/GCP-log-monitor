@@ -68,6 +68,7 @@ async def run_two_agent_workflow_stream(log_storage: LogStorageManager, lookback
     # 1. Get all anomalies in the lookback window
     max_index = await log_storage.get_current_max_index()
     start_index = max(0, max_index - lookback)
+    # Default: simulation mode or no project_id, analyze as before
     anomaly_indices = await log_storage.get_anomaly_indices(start_index, max_index)
     if not anomaly_indices:
         print("[DEBUG] No anomalies found in the lookback window. Skipping LLM calls.")
@@ -76,7 +77,6 @@ async def run_two_agent_workflow_stream(log_storage: LogStorageManager, lookback
     anomaly_logs = await log_storage.get_logs_range(min(anomaly_indices), max(anomaly_indices))
     anomaly_logs = [log for log in anomaly_logs if log.get("is_anomaly")]  # Defensive
     print(f"[DEBUG] Sending {len(anomaly_logs)} anomaly logs to Agent 1 (Grouping Agent)")
-
     # 2. Call Agent 1 to group anomalies
     grouping_agent = GroupingAgent(anomaly_logs).as_agent()
     grouping_prompt = (
@@ -86,7 +86,6 @@ async def run_two_agent_workflow_stream(log_storage: LogStorageManager, lookback
     groupings = await Runner.run(grouping_agent, input=grouping_prompt)
     group_ranges = groupings.final_output if hasattr(groupings, 'final_output') else groupings
     print(f"[DEBUG] Agent 1 returned {len(group_ranges) if group_ranges else 0} groups. Example: {group_ranges[0] if group_ranges else 'None'}")
-
     # 3. For each group, call Agent 2 for analysis
     analysis_agent = AnalysisAgent(log_storage, api_key=api_key).as_agent()
     for i, group in enumerate(group_ranges or []):

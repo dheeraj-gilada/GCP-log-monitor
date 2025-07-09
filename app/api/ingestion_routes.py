@@ -48,6 +48,10 @@ latest_monitoring_results = {
     "rca_results": []
 }
 
+# Separate global variables for simulation and live
+latest_monitoring_results_simulation = {"anomalies": [], "rca_results": []}
+latest_monitoring_results_live = {"anomalies": [], "rca_results": []}
+
 MODEL_DIR = "app/core/ML_engine/models/"
 model_cache = {}
 feature_list_cache = {}
@@ -129,7 +133,6 @@ async def ingest_logs_gcp(
     project_id: str = Form(...),
     service_account_file: UploadFile = File(...),
     mode: str = Form("live"),
-    log_ingestion: AdaptiveLogIngestion = Depends(get_log_ingestion)
 ):
     # Read service account JSON
     sa_json = await service_account_file.read()
@@ -140,10 +143,16 @@ async def ingest_logs_gcp(
     entries = client.list_entries(order_by=gcp_logging.DESCENDING, page_size=1000)
     logs = []
     for entry in entries:
-        logs.append(entry.to_api_repr())
+        log = entry.to_api_repr()
+        log['project_id'] = project_id  # Add project_id to each log
+        logs.append(log)
         if len(logs) >= 1000:
             break
-    # No buffer clearing needed; use Redis-based storage
+    # Use the correct Redis DB for the mode
+    log_ingestion = get_log_ingestion(mode)
+    # Flush Redis DB for live mode before ingesting
+    if mode == "live":
+        await log_ingestion.log_storage.flush_db()
     await log_ingestion.ingest_stream(logs, source="gcp_api", original_format="gcp_json", mode=mode)
     return {"ingested": len(logs)}
 
@@ -210,6 +219,46 @@ async def start_monitoring(request: Request):
 
     return StreamingResponse(report_stream(), media_type="text/event-stream")
 
+@router.get("/monitor/start-simulation")
+async def start_monitoring_simulation(request: Request):
+    lookback = int(request.query_params.get("lookback", 1000))
+    api_key = request.query_params.get("api_key")
+    email = request.query_params.get("email")
+    print(f"[MONITOR][SIMULATION] Received email for alerts: {email}")
+    log_ingestion = get_log_ingestion("simulation")
+    log_storage = log_ingestion.log_storage
+    async def report_stream():
+        group_count = 0
+        rca_results = []
+        async for report in run_two_agent_workflow_stream(log_storage, lookback=lookback, api_key=api_key):
+            group_count += 1
+            rca_results.append(report)
+            yield f"data: {json.dumps(report, default=str)}\n\n"
+        global latest_monitoring_results_simulation
+        latest_monitoring_results_simulation["rca_results"] = rca_results
+        yield f"data: {json.dumps({'done': True, 'total_alerts': group_count})}\n\n"
+    return StreamingResponse(report_stream(), media_type="text/event-stream")
+
+@router.get("/monitor/start-live")
+async def start_monitoring_live(request: Request):
+    lookback = int(request.query_params.get("lookback", 1000))
+    api_key = request.query_params.get("api_key")
+    email = request.query_params.get("email")
+    print(f"[MONITOR][LIVE] Received email for alerts: {email}")
+    log_ingestion = get_log_ingestion("live")
+    log_storage = log_ingestion.log_storage
+    async def report_stream():
+        group_count = 0
+        rca_results = []
+        async for report in run_two_agent_workflow_stream(log_storage, lookback=lookback, api_key=api_key):
+            group_count += 1
+            rca_results.append(report)
+            yield f"data: {json.dumps(report, default=str)}\n\n"
+        global latest_monitoring_results_live
+        latest_monitoring_results_live["rca_results"] = rca_results
+        yield f"data: {json.dumps({'done': True, 'total_alerts': group_count})}\n\n"
+    return StreamingResponse(report_stream(), media_type="text/event-stream")
+
 @router.post("/alerts/send-test")
 async def send_test_alert_email(request: Request):
     data = await request.json()
@@ -235,6 +284,50 @@ async def send_test_alert_email(request: Request):
         return {"success": True, "message": f"Test alert email sent to {email}"}
     except Exception as e:
         print(f"[ALERT-TEST] Error sending test alert email: {e}")
+        return {"success": False, "message": str(e)}, 500
+
+@router.post("/alerts/send-test-simulation")
+async def send_test_alert_email_simulation(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    rca_results = data.get("rca_results")
+    print(f"[ALERT-TEST][SIMULATION] Received request to send test alert email to: {email}")
+    global latest_monitoring_results_simulation
+    anomalies = latest_monitoring_results_simulation.get("anomalies", [])
+    if not rca_results:
+        rca_results = latest_monitoring_results_simulation.get("rca_results", [])
+    if not anomalies:
+        anomalies = [{"log": {"severity": "ERROR", "message": "Test anomaly log message"}, "detection": {"reason": "Test anomaly detected by rule engine"}, "rca": {"root_cause": "Test root cause", "impact": "Test impact", "remediation": "Test remediation"}}]
+    if not rca_results:
+        rca_results = [{"root_cause": "Test root cause", "impact": "Test impact", "remediation": "Test remediation"}]
+    try:
+        send_alert_email(email, anomalies, rca_results)
+        print(f"[ALERT-TEST][SIMULATION] Test alert email sent successfully to {email}.")
+        return {"success": True, "message": f"Test alert email sent to {email}"}
+    except Exception as e:
+        print(f"[ALERT-TEST][SIMULATION] Error sending test alert email: {e}")
+        return {"success": False, "message": str(e)}, 500
+
+@router.post("/alerts/send-test-live")
+async def send_test_alert_email_live(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    rca_results = data.get("rca_results")
+    print(f"[ALERT-TEST][LIVE] Received request to send test alert email to: {email}")
+    global latest_monitoring_results_live
+    anomalies = latest_monitoring_results_live.get("anomalies", [])
+    if not rca_results:
+        rca_results = latest_monitoring_results_live.get("rca_results", [])
+    if not anomalies:
+        anomalies = [{"log": {"severity": "ERROR", "message": "Test anomaly log message"}, "detection": {"reason": "Test anomaly detected by rule engine"}, "rca": {"root_cause": "Test root cause", "impact": "Test impact", "remediation": "Test remediation"}}]
+    if not rca_results:
+        rca_results = [{"root_cause": "Test root cause", "impact": "Test impact", "remediation": "Test remediation"}]
+    try:
+        send_alert_email(email, anomalies, rca_results)
+        print(f"[ALERT-TEST][LIVE] Test alert email sent successfully to {email}.")
+        return {"success": True, "message": f"Test alert email sent to {email}"}
+    except Exception as e:
+        print(f"[ALERT-TEST][LIVE] Error sending test alert email: {e}")
         return {"success": False, "message": str(e)}, 500
 
 @router.get("/logs/metrics", response_model=MetricsSnapshot)
